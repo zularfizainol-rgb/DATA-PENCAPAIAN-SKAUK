@@ -1,0 +1,6 @@
+{
+  "name": "Sistem Data Pencapaian SKAUK",
+  "description": "Sistem pengurusan data pencapaian dan rekod murid SKAUK dengan sokongan eksport laporan.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}

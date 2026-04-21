@@ -1,0 +1,46 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} { allow read, write: if false; }
+
+    function isSignedIn() { return request.auth != null; }
+    function isValidId(id) { return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$'); }
+    function incoming() { return request.resource.data; }
+    function existing() { return resource.data; }
+
+    function isValidPencapaian(data) {
+      return data.keys().hasAll(['nama', 'noKp', 'aliran', 'kelas', 'bahagian', 'pertandingan', 'statusPertandingan', 'peringkat', 'pencapaian', 'tahunKalendar', 'updatedAt', 'creatorId'])
+        && data.keys().size() == 12
+        && data.nama is string && data.nama.size() > 0 && data.nama.size() <= 200
+        && data.noKp is string && data.noKp.size() <= 20
+        && data.aliran is string && data.aliran.size() <= 50
+        && data.kelas is string && data.kelas.size() <= 50
+        && data.bahagian is string && data.bahagian.size() <= 100
+        && data.pertandingan is string && data.pertandingan.size() > 0 && data.pertandingan.size() <= 200
+        && data.statusPertandingan is string && data.statusPertandingan.size() <= 50
+        && data.peringkat is string && data.peringkat.size() <= 50
+        && data.pencapaian is string && data.pencapaian.size() <= 50
+        && data.tahunKalendar is string && data.tahunKalendar.size() == 4
+        && data.updatedAt is timestamp
+        && data.creatorId is string;
+    }
+
+    match /pencapaian/{pencapaianId} {
+      allow read: if true;
+      
+      allow create: if true
+        && isValidId(pencapaianId)
+        && isValidPencapaian(incoming())
+        && incoming().updatedAt == request.time;
+        
+      allow update: if true
+        && isValidId(pencapaianId)
+        && isValidPencapaian(incoming())
+        && incoming().diff(existing()).affectedKeys().hasOnly(['nama', 'noKp', 'aliran', 'kelas', 'bahagian', 'pertandingan', 'statusPertandingan', 'peringkat', 'pencapaian', 'tahunKalendar', 'updatedAt'])
+        && incoming().creatorId == existing().creatorId
+        && incoming().updatedAt == request.time;
+
+      allow delete: if true;
+    }
+  }
+}
