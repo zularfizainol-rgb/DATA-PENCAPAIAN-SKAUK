@@ -16,7 +16,7 @@ const senaraiBahagian = ["Unit Beruniform", "Kelab & Persatuan", "Sukan & Permai
 const senaraiPencapaian = ["Penyertaan", "Kelima", "Keempat", "Ketiga", "Naib Johan", "Johan"];
 const senaraiKelas = ["UIAM", "UM", "USM", "UPM", "UKM", "UTM", "UUM", "UITM", "USIM", "UPSI", "UNISZA"];
 const senaraiPeringkat = ["Antarabangsa", "Kebangsaan", "Negeri", "Daerah"];
-const senaraiAliran = ["Tahun 4", "Tahun 5", "Tahun 6"];
+const senaraiAliran = ["Tahun 1", "Tahun 2", "Tahun 3", "Tahun 4", "Tahun 5", "Tahun 6"];
 
 type RecordData = {
   id: string;
@@ -47,7 +47,7 @@ export default function App() {
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   
   const [formData, setFormData] = useState({
-    nama: '', noKp: '', aliran: 'Tahun 4', kelas: 'UIAM',
+    nama: '', noKp: '', aliran: 'Tahun 1', kelas: 'UIAM',
     bahagian: 'Unit Beruniform', pertandingan: '', 
     statusPertandingan: 'KPM', peringkat: 'Daerah', pencapaian: 'Penyertaan',
     creatorId: ''
@@ -94,7 +94,7 @@ export default function App() {
 
   const resetFormData = () => {
     setFormData({
-      nama: '', noKp: '', aliran: 'Tahun 4', kelas: 'UIAM',
+      nama: '', noKp: '', aliran: 'Tahun 1', kelas: 'UIAM',
       bahagian: 'Unit Beruniform', pertandingan: '', 
       statusPertandingan: 'KPM', peringkat: 'Daerah', pencapaian: 'Penyertaan',
       creatorId: ''
