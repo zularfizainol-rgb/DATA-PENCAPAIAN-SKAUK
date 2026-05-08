@@ -45,6 +45,7 @@ export default function App() {
   const [filterKelas, setFilterKelas] = useState('SEMUA');
   const [editingId, setEditingId] = useState<string | null>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+  const [selectedDashboardPeringkat, setSelectedDashboardPeringkat] = useState<string | null>(null);
   
   const [formData, setFormData] = useState({
     nama: '', noKp: '', aliran: 'Tahun 1', kelas: 'UIAM',
@@ -283,9 +284,13 @@ export default function App() {
                   {senaraiPeringkat.map(p => {
                     const count = statsDashboard.filter(r => r.peringkat === p).length;
                     return (
-                      <div key={p} className="bg-white rounded-[32px] p-6 border border-slate-100 shadow-sm flex flex-col justify-center">
-                        <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">{p}</p>
-                        <h4 className="text-4xl font-black text-slate-800 italic">{count}</h4>
+                      <div 
+                        key={p} 
+                        onClick={() => setSelectedDashboardPeringkat(p)}
+                        className="bg-white rounded-[32px] p-6 border border-slate-100 shadow-sm flex flex-col justify-center cursor-pointer hover:border-amber-500 hover:shadow-md transition-all group"
+                      >
+                        <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1 group-hover:text-amber-500 transition-colors">{p}</p>
+                        <h4 className="text-4xl font-black text-slate-800 italic group-hover:scale-105 transition-transform origin-left">{count}</h4>
                       </div>
                     );
                   })}
@@ -342,9 +347,64 @@ export default function App() {
                   ))}
                 </div>
               </div>
+
+              {selectedDashboardPeringkat && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm animate-in fade-in duration-200">
+                  <div className="bg-white w-full max-w-2xl rounded-[32px] shadow-2xl overflow-hidden flex flex-col max-h-[85vh]">
+                    <div className="p-6 md:p-8 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
+                      <div>
+                        <h3 className="text-xl font-black text-slate-800 uppercase italic">Senarai Pertandingan</h3>
+                        <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mt-1">
+                          Peringkat {selectedDashboardPeringkat} ({selectedYear})
+                        </p>
+                      </div>
+                      <button onClick={() => setSelectedDashboardPeringkat(null)} className="p-2 text-slate-400 hover:bg-slate-200 hover:text-slate-700 rounded-full transition-colors">
+                        <X className="w-6 h-6" />
+                      </button>
+                    </div>
+                    <div className="p-6 md:p-8 overflow-y-auto flex-1">
+                      {(() => {
+                        const filteredList = statsDashboard.filter(r => r.peringkat === selectedDashboardPeringkat);
+                        const grouped = filteredList.reduce((acc, curr) => {
+                          const key = curr.pertandingan.trim().toUpperCase();
+                          if (!acc[key]) acc[key] = [];
+                          acc[key].push(curr);
+                          return acc;
+                        }, {} as Record<string, typeof filteredList>);
+                        
+                        const keys = Object.keys(grouped).sort();
+                        
+                        if (keys.length === 0) {
+                          return <div className="py-12 text-center text-slate-400 font-bold uppercase text-xs tracking-widest italic">Tiada Rekod Pertandingan</div>;
+                        }
+                        
+                        return (
+                          <div className="space-y-4">
+                            {keys.map((k, i) => (
+                              <div key={i} className="flex justify-between items-center p-4 rounded-2xl bg-slate-50 border border-slate-100 hover:border-amber-300 transition-colors">
+                                <div>
+                                  <div className="font-bold text-slate-800 text-xs md:text-sm">{k}</div>
+                                  <div className="text-[9px] font-black text-slate-400 uppercase tracking-widest mt-1">
+                                    {grouped[k][0].bahagian}
+                                  </div>
+                                </div>
+                                <div className="bg-white border border-slate-200 px-3 py-1.5 rounded-xl flex items-center gap-2 shadow-sm shrink-0">
+                                  <Users className="w-3 h-3 text-slate-400" />
+                                  <span className="text-xs font-black text-amber-600">{grouped[k].length} murid</span>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        );
+                      })()}
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           );
         })()}
+
 
         {activeView === 'kemasukan' && (
           <div className="max-w-4xl mx-auto animate-in slide-in-from-bottom-6 duration-500">
