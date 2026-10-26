@@ -110,6 +110,7 @@ export default function App() {
   const [filterKelas, setFilterKelas] = useState('SEMUA');
   const [filterStatus, setFilterStatus] = useState('SEMUA');
   const [filterBahagian, setFilterBahagian] = useState('SEMUA');
+  const [filterPeringkat, setFilterPeringkat] = useState('SEMUA');
   const [editingId, setEditingId] = useState<string | null>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [quotaWarning, setQuotaWarning] = useState(false);
@@ -210,9 +211,51 @@ export default function App() {
       const matchesKelas = filterKelas === 'SEMUA' || r.kelas === filterKelas;
       const matchesStatus = filterStatus === 'SEMUA' || normalizeStatus(r.statusPertandingan) === filterStatus;
       const matchesBahagian = filterBahagian === 'SEMUA' || r.bahagian === filterBahagian;
+      const matchesPeringkat = filterPeringkat === 'SEMUA' || r.peringkat === filterPeringkat;
+      return matchesYear && matchesSearch && matchesAliran && matchesKelas && matchesStatus && matchesBahagian && matchesPeringkat;
+    });
+  }, [rekodPajsk, selectedYear, searchTerm, filterAliran, filterKelas, filterStatus, filterBahagian, filterPeringkat]);
+
+  // Statistics & Counters for Rekod Murid view
+  const statsPeringkat = useMemo(() => {
+    // Base records matching current year and non-peringkat filters (to show accurate breakdown across all peringkat)
+    const baseRecords = rekodPajsk.filter(r => {
+      const matchesYear = r.tahunKalendar === selectedYear;
+      const matchesSearch = !searchTerm || 
+        (r.nama || '').toLowerCase().includes(searchTerm.toLowerCase()) || 
+        (r.pertandingan || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+        (r.noKp || '').includes(searchTerm);
+      const matchesAliran = filterAliran === 'SEMUA' || r.aliran === filterAliran;
+      const matchesKelas = filterKelas === 'SEMUA' || r.kelas === filterKelas;
+      const matchesStatus = filterStatus === 'SEMUA' || normalizeStatus(r.statusPertandingan) === filterStatus;
+      const matchesBahagian = filterBahagian === 'SEMUA' || r.bahagian === filterBahagian;
       return matchesYear && matchesSearch && matchesAliran && matchesKelas && matchesStatus && matchesBahagian;
     });
-  }, [rekodPajsk, selectedYear, searchTerm, filterAliran, filterKelas, filterStatus, filterBahagian]);
+
+    const countDaerah = baseRecords.filter(r => r.peringkat === 'Daerah').length;
+    const countNegeri = baseRecords.filter(r => r.peringkat === 'Negeri').length;
+    const countKebangsaan = baseRecords.filter(r => r.peringkat === 'Kebangsaan').length;
+    const countAntarabangsa = baseRecords.filter(r => r.peringkat === 'Antarabangsa').length;
+    
+    // Total participations in current view vs total records in calendar year
+    const totalPenyertaan = filteredData.length;
+    const totalTahunSemasa = rekodPajsk.filter(r => r.tahunKalendar === selectedYear).length;
+    
+    // Bilangan murid unik (berdasarkan IC atau Nama) dalam paparan semasa
+    const muridUnik = new Set(
+      filteredData.map(r => (r.noKp && r.noKp.trim() !== '' ? r.noKp.trim().replace(/[^0-9]/g, '') : r.nama.trim().toUpperCase()))
+    ).size;
+
+    return {
+      countDaerah,
+      countNegeri,
+      countKebangsaan,
+      countAntarabangsa,
+      totalPenyertaan,
+      totalTahunSemasa,
+      muridUnik
+    };
+  }, [rekodPajsk, selectedYear, searchTerm, filterAliran, filterKelas, filterStatus, filterBahagian, filteredData]);
 
   const switchView = (view: 'dashboard' | 'kemasukan' | 'senarai') => {
     setActiveView(view);
@@ -501,7 +544,8 @@ export default function App() {
     
     const statusSuffix = filterStatus !== 'SEMUA' ? `_${filterStatus.replace(/[^a-zA-Z0-9]/g, '_')}` : '';
     const bahagianSuffix = filterBahagian !== 'SEMUA' ? `_${filterBahagian.replace(/[^a-zA-Z0-9]/g, '_')}` : '';
-    XLSX.writeFile(wb, `REKOD_PENYERTAAN_SKAUK_${selectedYear}${statusSuffix}${bahagianSuffix}.xlsx`);
+    const peringkatSuffix = filterPeringkat !== 'SEMUA' ? `_${filterPeringkat.replace(/[^a-zA-Z0-9]/g, '_')}` : '';
+    XLSX.writeFile(wb, `REKOD_PENYERTAAN_SKAUK_${selectedYear}${statusSuffix}${bahagianSuffix}${peringkatSuffix}.xlsx`);
   };
 
   const exportPDF = () => {
@@ -513,6 +557,7 @@ export default function App() {
     const filterInfo = [
       filterStatus !== 'SEMUA' ? `Status: ${filterStatus}` : '',
       filterBahagian !== 'SEMUA' ? `Bahagian: ${filterBahagian}` : '',
+      filterPeringkat !== 'SEMUA' ? `Peringkat: ${filterPeringkat}` : '',
       filterAliran !== 'SEMUA' ? `Aliran: ${filterAliran}` : '',
       filterKelas !== 'SEMUA' ? `Kelas: ${filterKelas}` : ''
     ].filter(Boolean).join(' • ');
@@ -543,7 +588,8 @@ export default function App() {
 
     const statusSuffix = filterStatus !== 'SEMUA' ? `_${filterStatus.replace(/[^a-zA-Z0-9]/g, '_')}` : '';
     const bahagianSuffix = filterBahagian !== 'SEMUA' ? `_${filterBahagian.replace(/[^a-zA-Z0-9]/g, '_')}` : '';
-    docPdf.save(`LAPORAN_SKAUK_${selectedYear}${statusSuffix}${bahagianSuffix}.pdf`);
+    const peringkatSuffix = filterPeringkat !== 'SEMUA' ? `_${filterPeringkat.replace(/[^a-zA-Z0-9]/g, '_')}` : '';
+    docPdf.save(`LAPORAN_SKAUK_${selectedYear}${statusSuffix}${bahagianSuffix}${peringkatSuffix}.pdf`);
   };
 
   // Helper to copy student names from competition modal
@@ -2153,6 +2199,153 @@ export default function App() {
               </div>
             </div>
 
+            {/* Counter Cards: Bilangan Penyertaan Mengikut Peringkat & Keseluruhan */}
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+              {/* Kad 1: Jumlah Penyertaan */}
+              <button
+                type="button"
+                onClick={() => setFilterPeringkat('SEMUA')}
+                className={`p-4 rounded-2xl border text-left transition-all cursor-pointer relative overflow-hidden group ${
+                  filterPeringkat === 'SEMUA'
+                    ? 'bg-amber-500 text-white border-amber-600 shadow-sm shadow-amber-500/20 ring-2 ring-amber-400'
+                    : 'bg-white hover:bg-slate-50 text-slate-800 border-slate-200 shadow-xs'
+                }`}
+                title="Papar semua peringkat"
+              >
+                <div className="flex items-center justify-between gap-1 mb-1.5">
+                  <span className={`text-[10px] font-black uppercase tracking-wider ${filterPeringkat === 'SEMUA' ? 'text-amber-100' : 'text-slate-500'}`}>
+                    Semua Penyertaan
+                  </span>
+                  <Award className={`w-4 h-4 shrink-0 ${filterPeringkat === 'SEMUA' ? 'text-amber-200' : 'text-amber-500'}`} />
+                </div>
+                <div className="text-2xl font-black tracking-tight">
+                  {statsPeringkat.totalPenyertaan}
+                </div>
+                <div className={`text-[10px] font-bold mt-1 truncate ${filterPeringkat === 'SEMUA' ? 'text-amber-100' : 'text-slate-400'}`}>
+                  {statsPeringkat.totalTahunSemasa} rekod sesi
+                </div>
+              </button>
+
+              {/* Kad 2: Peringkat Daerah */}
+              <button
+                type="button"
+                onClick={() => setFilterPeringkat(filterPeringkat === 'Daerah' ? 'SEMUA' : 'Daerah')}
+                className={`p-4 rounded-2xl border text-left transition-all cursor-pointer relative overflow-hidden group ${
+                  filterPeringkat === 'Daerah'
+                    ? 'bg-teal-600 text-white border-teal-700 shadow-sm shadow-teal-600/20 ring-2 ring-teal-400'
+                    : 'bg-white hover:bg-teal-50/50 text-slate-800 border-slate-200 shadow-xs'
+                }`}
+                title="Klik untuk tapis Peringkat Daerah"
+              >
+                <div className="flex items-center justify-between gap-1 mb-1.5">
+                  <span className={`text-[10px] font-black uppercase tracking-wider ${filterPeringkat === 'Daerah' ? 'text-teal-100' : 'text-teal-700'}`}>
+                    Daerah
+                  </span>
+                  <span className={`w-2 h-2 rounded-full ${filterPeringkat === 'Daerah' ? 'bg-white animate-pulse' : 'bg-teal-500'}`} />
+                </div>
+                <div className="text-2xl font-black tracking-tight">
+                  {statsPeringkat.countDaerah}
+                </div>
+                <div className={`text-[10px] font-bold mt-1 truncate ${filterPeringkat === 'Daerah' ? 'text-teal-100' : 'text-slate-400'}`}>
+                  {filterPeringkat === 'Daerah' ? '✓ Sedang Ditapis' : 'Klik untuk tapis'}
+                </div>
+              </button>
+
+              {/* Kad 3: Peringkat Negeri */}
+              <button
+                type="button"
+                onClick={() => setFilterPeringkat(filterPeringkat === 'Negeri' ? 'SEMUA' : 'Negeri')}
+                className={`p-4 rounded-2xl border text-left transition-all cursor-pointer relative overflow-hidden group ${
+                  filterPeringkat === 'Negeri'
+                    ? 'bg-blue-600 text-white border-blue-700 shadow-sm shadow-blue-600/20 ring-2 ring-blue-400'
+                    : 'bg-white hover:bg-blue-50/50 text-slate-800 border-slate-200 shadow-xs'
+                }`}
+                title="Klik untuk tapis Peringkat Negeri"
+              >
+                <div className="flex items-center justify-between gap-1 mb-1.5">
+                  <span className={`text-[10px] font-black uppercase tracking-wider ${filterPeringkat === 'Negeri' ? 'text-blue-100' : 'text-blue-700'}`}>
+                    Negeri
+                  </span>
+                  <span className={`w-2 h-2 rounded-full ${filterPeringkat === 'Negeri' ? 'bg-white animate-pulse' : 'bg-blue-500'}`} />
+                </div>
+                <div className="text-2xl font-black tracking-tight">
+                  {statsPeringkat.countNegeri}
+                </div>
+                <div className={`text-[10px] font-bold mt-1 truncate ${filterPeringkat === 'Negeri' ? 'text-blue-100' : 'text-slate-400'}`}>
+                  {filterPeringkat === 'Negeri' ? '✓ Sedang Ditapis' : 'Klik untuk tapis'}
+                </div>
+              </button>
+
+              {/* Kad 4: Peringkat Kebangsaan */}
+              <button
+                type="button"
+                onClick={() => setFilterPeringkat(filterPeringkat === 'Kebangsaan' ? 'SEMUA' : 'Kebangsaan')}
+                className={`p-4 rounded-2xl border text-left transition-all cursor-pointer relative overflow-hidden group ${
+                  filterPeringkat === 'Kebangsaan'
+                    ? 'bg-amber-600 text-white border-amber-700 shadow-sm shadow-amber-600/20 ring-2 ring-amber-400'
+                    : 'bg-white hover:bg-amber-50/50 text-slate-800 border-slate-200 shadow-xs'
+                }`}
+                title="Klik untuk tapis Peringkat Kebangsaan"
+              >
+                <div className="flex items-center justify-between gap-1 mb-1.5">
+                  <span className={`text-[10px] font-black uppercase tracking-wider ${filterPeringkat === 'Kebangsaan' ? 'text-amber-100' : 'text-amber-700'}`}>
+                    Kebangsaan
+                  </span>
+                  <span className={`w-2 h-2 rounded-full ${filterPeringkat === 'Kebangsaan' ? 'bg-white animate-pulse' : 'bg-amber-500'}`} />
+                </div>
+                <div className="text-2xl font-black tracking-tight">
+                  {statsPeringkat.countKebangsaan}
+                </div>
+                <div className={`text-[10px] font-bold mt-1 truncate ${filterPeringkat === 'Kebangsaan' ? 'text-amber-100' : 'text-slate-400'}`}>
+                  {filterPeringkat === 'Kebangsaan' ? '✓ Sedang Ditapis' : 'Klik untuk tapis'}
+                </div>
+              </button>
+
+              {/* Kad 5: Peringkat Antarabangsa */}
+              <button
+                type="button"
+                onClick={() => setFilterPeringkat(filterPeringkat === 'Antarabangsa' ? 'SEMUA' : 'Antarabangsa')}
+                className={`p-4 rounded-2xl border text-left transition-all cursor-pointer relative overflow-hidden group ${
+                  filterPeringkat === 'Antarabangsa'
+                    ? 'bg-purple-600 text-white border-purple-700 shadow-sm shadow-purple-600/20 ring-2 ring-purple-400'
+                    : 'bg-white hover:bg-purple-50/50 text-slate-800 border-slate-200 shadow-xs'
+                }`}
+                title="Klik untuk tapis Peringkat Antarabangsa"
+              >
+                <div className="flex items-center justify-between gap-1 mb-1.5">
+                  <span className={`text-[10px] font-black uppercase tracking-wider ${filterPeringkat === 'Antarabangsa' ? 'text-purple-100' : 'text-purple-700'}`}>
+                    Antarabangsa
+                  </span>
+                  <span className={`w-2 h-2 rounded-full ${filterPeringkat === 'Antarabangsa' ? 'bg-white animate-pulse' : 'bg-purple-500'}`} />
+                </div>
+                <div className="text-2xl font-black tracking-tight">
+                  {statsPeringkat.countAntarabangsa}
+                </div>
+                <div className={`text-[10px] font-bold mt-1 truncate ${filterPeringkat === 'Antarabangsa' ? 'text-purple-100' : 'text-slate-400'}`}>
+                  {filterPeringkat === 'Antarabangsa' ? '✓ Sedang Ditapis' : 'Klik untuk tapis'}
+                </div>
+              </button>
+
+              {/* Kad 6: Murid Terlibat (Unik) */}
+              <div
+                className="p-4 rounded-2xl border bg-white text-slate-800 border-slate-200 shadow-xs text-left"
+                title="Jumlah murid unik yang terlibat dalam senarai paparan semasa"
+              >
+                <div className="flex items-center justify-between gap-1 mb-1.5">
+                  <span className="text-[10px] font-black uppercase tracking-wider text-slate-500">
+                    Murid Terlibat
+                  </span>
+                  <Users className="w-4 h-4 text-indigo-500 shrink-0" />
+                </div>
+                <div className="text-2xl font-black tracking-tight text-indigo-950">
+                  {statsPeringkat.muridUnik}
+                </div>
+                <div className="text-[10px] font-bold mt-1 text-slate-400 truncate">
+                  individu berbeza
+                </div>
+              </div>
+            </div>
+
             {/* Filter Bar */}
             <div className="bg-white p-5 md:p-6 rounded-[32px] shadow-sm border border-slate-100 space-y-4">
               {/* Row 1: Search & Export Actions */}
@@ -2205,6 +2398,24 @@ export default function App() {
                 <div className="flex items-center gap-1.5 text-slate-400 text-xs font-black uppercase tracking-wider pr-1">
                   <Filter className="w-3.5 h-3.5 text-amber-500" />
                   <span className="text-[11px] text-slate-600">Penapis:</span>
+                </div>
+
+                {/* Filter Peringkat */}
+                <div className="flex-1 min-w-[150px] sm:flex-initial">
+                  <select 
+                    onChange={(e) => setFilterPeringkat(e.target.value)} 
+                    value={filterPeringkat} 
+                    className={`w-full bg-slate-50 border px-3.5 py-2.5 rounded-xl font-bold text-xs outline-none cursor-pointer transition-all ${
+                      filterPeringkat !== 'SEMUA' 
+                        ? 'border-emerald-500 bg-emerald-50 text-emerald-950 font-black ring-2 ring-emerald-200' 
+                        : 'border-slate-200 text-slate-700 hover:border-slate-300'
+                    }`}
+                  >
+                    <option value="SEMUA">Semua Peringkat</option>
+                    {senaraiPeringkat.map(p => (
+                      <option key={p} value={p}>Peringkat {p}</option>
+                    ))}
+                  </select>
                 </div>
 
                 {/* Filter Status Pertandingan */}
@@ -2280,12 +2491,13 @@ export default function App() {
                 </div>
 
                 {/* Reset Filters button if any filter is active */}
-                {(filterStatus !== 'SEMUA' || filterBahagian !== 'SEMUA' || filterAliran !== 'SEMUA' || filterKelas !== 'SEMUA' || searchTerm) && (
+                {(filterStatus !== 'SEMUA' || filterBahagian !== 'SEMUA' || filterPeringkat !== 'SEMUA' || filterAliran !== 'SEMUA' || filterKelas !== 'SEMUA' || searchTerm) && (
                   <button
                     type="button"
                     onClick={() => {
                       setFilterStatus('SEMUA');
                       setFilterBahagian('SEMUA');
+                      setFilterPeringkat('SEMUA');
                       setFilterAliran('SEMUA');
                       setFilterKelas('SEMUA');
                       setSearchTerm('');
@@ -2300,9 +2512,17 @@ export default function App() {
               </div>
 
               {/* Active Filter Indicators / Summary Bar for Quick Verification & Download Context */}
-              {(filterStatus !== 'SEMUA' || filterBahagian !== 'SEMUA' || filterAliran !== 'SEMUA' || filterKelas !== 'SEMUA') && (
+              {(filterStatus !== 'SEMUA' || filterBahagian !== 'SEMUA' || filterPeringkat !== 'SEMUA' || filterAliran !== 'SEMUA' || filterKelas !== 'SEMUA') && (
                 <div className="flex flex-wrap items-center gap-2 pt-1 text-xs">
                   <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">Penapis Dipilih Untuk Muat Turun ({filteredData.length} rekod):</span>
+                  {filterPeringkat !== 'SEMUA' && (
+                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[10px] font-black border bg-emerald-50 text-emerald-800 border-emerald-200 shadow-xs">
+                      <span>Peringkat: {filterPeringkat}</span>
+                      <button type="button" onClick={() => setFilterPeringkat('SEMUA')} className="hover:text-emerald-950 cursor-pointer">
+                        <X className="w-3 h-3" />
+                      </button>
+                    </span>
+                  )}
                   {filterStatus !== 'SEMUA' && (
                     <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[10px] font-black border bg-indigo-50 text-indigo-700 border-indigo-200 shadow-xs">
                       <span>Status: {filterStatus}</span>
