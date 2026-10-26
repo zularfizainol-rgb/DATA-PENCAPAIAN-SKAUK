@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import {
   Loader2, LayoutDashboard, PlusCircle, Users, Trophy, GraduationCap,
   PieChart, X, Save, Search, FileSpreadsheet, FileText, Award, Edit3, Trash2,
-  Plus, ClipboardList, CheckCircle2, ArrowLeft, Copy, Check, ChevronRight, UserPlus
+  Plus, ClipboardList, CheckCircle2, ArrowLeft, Copy, Check, ChevronRight, UserPlus, Filter
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
@@ -46,8 +46,32 @@ const senaraiAliran = [
 
 const senaraiStatusPertandingan = [
   "KPM", 
-  "Anjuran Agensi Luar"
+  "LUAR KPM (PENGIKTIRAFAN)",
+  "LUAR KPM"
 ];
+
+// Helper to normalize and identify status cleanly
+const normalizeStatus = (status?: string): 'KPM' | 'LUAR KPM (PENGIKTIRAFAN)' | 'LUAR KPM' => {
+  if (!status) return 'KPM';
+  const s = status.trim().toUpperCase();
+  if (s.includes('PENGIKTIRAFAN')) return 'LUAR KPM (PENGIKTIRAFAN)';
+  if (s === 'LUAR KPM' || s.includes('AGENSI') || s.includes('BUKAN KPM') || s === 'LUAR') return 'LUAR KPM';
+  return 'KPM';
+};
+
+const getStatusBadgeClass = (status?: string) => {
+  const norm = normalizeStatus(status);
+  if (norm === 'KPM') return 'bg-emerald-50 text-emerald-800 border-emerald-200';
+  if (norm === 'LUAR KPM (PENGIKTIRAFAN)') return 'bg-indigo-50 text-indigo-800 border-indigo-200';
+  return 'bg-amber-50 text-amber-800 border-amber-200';
+};
+
+const getStatusBadgeDark = (status?: string) => {
+  const norm = normalizeStatus(status);
+  if (norm === 'KPM') return 'bg-emerald-700 text-white';
+  if (norm === 'LUAR KPM (PENGIKTIRAFAN)') return 'bg-indigo-700 text-white';
+  return 'bg-amber-600 text-white';
+};
 
 type RecordData = {
   id: string;
@@ -93,6 +117,7 @@ export default function App() {
   const [selectedDashboardBahagian, setSelectedDashboardBahagian] = useState<string | null>(null);
   const [selectedPertandinganInModal, setSelectedPertandinganInModal] = useState<string | null>(null);
   const [modalSearchTerm, setModalSearchTerm] = useState('');
+  const [modalStatusFilter, setModalStatusFilter] = useState<string>('SEMUA');
   const [copyFeedback, setCopyFeedback] = useState(false);
 
   // Kemasukan Mode: 'individu' | 'pukal'
@@ -672,6 +697,7 @@ export default function App() {
                           setSelectedDashboardPeringkat(p);
                           setSelectedPertandinganInModal(null);
                           setModalSearchTerm('');
+                          setModalStatusFilter('SEMUA');
                         }}
                         className="bg-white rounded-[32px] p-6 border border-slate-100 shadow-sm flex flex-col justify-center cursor-pointer hover:border-amber-500 hover:shadow-md transition-all group"
                         title="Klik untuk lihat senarai pertandingan & nama murid"
@@ -742,6 +768,7 @@ export default function App() {
                         setSelectedDashboardBahagian(b);
                         setSelectedPertandinganInModal(null);
                         setModalSearchTerm('');
+                        setModalStatusFilter('SEMUA');
                       }}
                       className="p-5 rounded-3xl bg-slate-50 border border-slate-100 hover:border-amber-400 hover:shadow-md cursor-pointer transition-all group"
                       title="Klik untuk lihat pertandingan dan senarai murid"
@@ -795,6 +822,7 @@ export default function App() {
                           setSelectedDashboardPeringkat(null);
                           setSelectedPertandinganInModal(null);
                           setModalSearchTerm('');
+                          setModalStatusFilter('SEMUA');
                         }} 
                         className="p-2 text-slate-400 hover:bg-slate-200 hover:text-slate-700 rounded-full transition-colors cursor-pointer"
                       >
@@ -815,12 +843,24 @@ export default function App() {
                           return acc;
                         }, {} as Record<string, typeof filteredList>);
                         
-                        const keys = Object.keys(grouped).sort();
+                        const allKeys = Object.keys(grouped).sort();
+
+                        // Count by status
+                        const countSemua = allKeys.length;
+                        const countKpm = allKeys.filter(k => normalizeStatus(grouped[k][0]?.statusPertandingan) === 'KPM').length;
+                        const countLuarPengiktirafan = allKeys.filter(k => normalizeStatus(grouped[k][0]?.statusPertandingan) === 'LUAR KPM (PENGIKTIRAFAN)').length;
+                        const countLuarKpm = allKeys.filter(k => normalizeStatus(grouped[k][0]?.statusPertandingan) === 'LUAR KPM').length;
+
+                        // Filter by selected status
+                        const keys = modalStatusFilter === 'SEMUA'
+                          ? allKeys
+                          : allKeys.filter(k => normalizeStatus(grouped[k][0]?.statusPertandingan) === modalStatusFilter);
 
                         // If user selected a specific competition to drill down:
                         if (selectedPertandinganInModal) {
                           const students = grouped[selectedPertandinganInModal] || [];
                           const compInfo = students[0];
+                          const compStatus = normalizeStatus(compInfo?.statusPertandingan);
                           const filteredStudents = students.filter(s => 
                             (s.nama || '').toLowerCase().includes(modalSearchTerm.toLowerCase()) ||
                             (s.noKp || '').includes(modalSearchTerm) ||
@@ -837,8 +877,8 @@ export default function App() {
                                     <span className="bg-amber-500 text-slate-900 px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider shadow-sm">
                                       Peringkat {selectedDashboardPeringkat}
                                     </span>
-                                    <span className="bg-slate-800 text-white px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider shadow-sm">
-                                      {compInfo?.statusPertandingan || 'KPM'}
+                                    <span className={`${getStatusBadgeDark(compStatus)} px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider shadow-sm`}>
+                                      {compStatus}
                                     </span>
                                     <span className="bg-white border border-amber-500/30 text-slate-700 px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase tracking-wider shadow-sm">
                                       {compInfo?.bahagian}
@@ -858,7 +898,7 @@ export default function App() {
 
                                     <button 
                                       type="button"
-                                      onClick={() => handleAddMoreToThisCompetition(selectedPertandinganInModal, compInfo?.bahagian, selectedDashboardPeringkat, compInfo?.statusPertandingan)}
+                                      onClick={() => handleAddMoreToThisCompetition(selectedPertandinganInModal, compInfo?.bahagian, selectedDashboardPeringkat, compStatus)}
                                       className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-4 py-2 bg-amber-500 hover:bg-amber-400 text-slate-900 rounded-xl text-xs font-black shadow-md transition-all cursor-pointer"
                                       title="Tambah murid baru ke pertandingan ini"
                                     >
@@ -957,49 +997,173 @@ export default function App() {
                         }
                         
                         // Otherwise, show list of competitions in this peringkat:
-                        if (keys.length === 0) {
+                        if (allKeys.length === 0) {
                           return <div className="py-12 text-center text-slate-400 font-bold uppercase text-xs tracking-widest italic">Tiada Rekod Pertandingan</div>;
                         }
                         
                         return (
-                          <div className="space-y-4">
-                            <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">
-                              Pilih satu pertandingan di bawah untuk menyemak senarai nama murid yang terlibat:
-                            </p>
-                            {keys.map((k, i) => {
-                              const competitionStudents = grouped[k];
-                              const firstItem = competitionStudents[0];
-                              return (
-                                <div 
-                                  key={i} 
-                                  onClick={() => {
-                                    setSelectedPertandinganInModal(k);
-                                    setModalSearchTerm('');
-                                  }}
-                                  className="flex flex-col sm:flex-row justify-between items-start sm:items-center p-5 rounded-2xl bg-slate-50 border border-slate-200 hover:border-amber-400 hover:bg-amber-50/20 hover:shadow-md cursor-pointer transition-all group gap-3"
-                                >
-                                  <div>
-                                    <div className="font-black text-slate-900 text-sm md:text-base group-hover:text-amber-700 transition-colors">
-                                      {k}
-                                    </div>
-                                    <div className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mt-1.5 flex flex-wrap items-center gap-2">
-                                      <span className="bg-white border border-slate-200 px-2 py-0.5 rounded font-black text-slate-600">{firstItem.bahagian}</span>
-                                      <span className="bg-amber-100 text-amber-800 px-2 py-0.5 rounded font-black">{firstItem.statusPertandingan || 'KPM'}</span>
-                                    </div>
+                          <div className="space-y-5">
+                            {/* Filter Status Pertandingan Button Group */}
+                            <div className="bg-slate-50 border border-slate-200/90 p-4 rounded-2xl space-y-3">
+                              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                                <div className="flex items-center gap-2">
+                                  <div className="p-1.5 bg-amber-500/10 text-amber-600 rounded-lg">
+                                    <Filter className="w-4 h-4" />
                                   </div>
-
-                                  <div className="flex items-center gap-3 self-end sm:self-auto shrink-0">
-                                    <div className="bg-white border border-slate-200 px-3.5 py-2 rounded-xl flex items-center gap-2 shadow-sm">
-                                      <Users className="w-4 h-4 text-amber-500" />
-                                      <span className="text-xs font-black text-slate-800">{competitionStudents.length} orang murid</span>
-                                    </div>
-                                    <span className="flex items-center gap-1 text-xs font-black text-amber-600 group-hover:translate-x-1 transition-transform">
-                                      Semak Murid <ChevronRight className="w-4 h-4" />
+                                  <div>
+                                    <span className="text-xs font-black text-slate-800 uppercase tracking-wider">
+                                      Pilih Status Pertandingan:
                                     </span>
+                                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
+                                      Tapis pertandingan mengikut punca pengiktirafan
+                                    </p>
                                   </div>
                                 </div>
-                              );
-                            })}
+                                {modalStatusFilter !== 'SEMUA' && (
+                                  <button 
+                                    type="button" 
+                                    onClick={() => setModalStatusFilter('SEMUA')}
+                                    className="self-start sm:self-auto text-[10px] font-black text-amber-700 hover:text-amber-800 uppercase tracking-wider underline cursor-pointer"
+                                  >
+                                    Set Semula (Papar Semua {countSemua})
+                                  </button>
+                                )}
+                              </div>
+
+                              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                                {/* Button SEMUA */}
+                                <button
+                                  type="button"
+                                  onClick={() => setModalStatusFilter('SEMUA')}
+                                  className={`px-3 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider flex items-center justify-between transition-all cursor-pointer border ${
+                                    modalStatusFilter === 'SEMUA'
+                                      ? 'bg-slate-900 text-white border-slate-900 shadow-md'
+                                      : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100 hover:border-slate-300'
+                                  }`}
+                                >
+                                  <span>Semua</span>
+                                  <span className={`text-[10px] px-2 py-0.5 rounded-md font-black ${
+                                    modalStatusFilter === 'SEMUA' ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-600'
+                                  }`}>
+                                    {countSemua}
+                                  </span>
+                                </button>
+
+                                {/* Button KPM */}
+                                <button
+                                  type="button"
+                                  onClick={() => setModalStatusFilter('KPM')}
+                                  className={`px-3 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider flex items-center justify-between transition-all cursor-pointer border ${
+                                    modalStatusFilter === 'KPM'
+                                      ? 'bg-emerald-600 text-white border-emerald-600 shadow-md'
+                                      : 'bg-white text-emerald-800 border-slate-200 hover:bg-emerald-50 hover:border-emerald-300'
+                                  }`}
+                                >
+                                  <span className="truncate">KPM</span>
+                                  <span className={`text-[10px] px-2 py-0.5 rounded-md font-black ml-1 ${
+                                    modalStatusFilter === 'KPM' ? 'bg-emerald-700 text-white' : 'bg-emerald-100 text-emerald-800'
+                                  }`}>
+                                    {countKpm}
+                                  </span>
+                                </button>
+
+                                {/* Button LUAR KPM (PENGIKTIRAFAN) */}
+                                <button
+                                  type="button"
+                                  onClick={() => setModalStatusFilter('LUAR KPM (PENGIKTIRAFAN)')}
+                                  className={`px-2.5 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider flex items-center justify-between transition-all cursor-pointer border ${
+                                    modalStatusFilter === 'LUAR KPM (PENGIKTIRAFAN)'
+                                      ? 'bg-indigo-600 text-white border-indigo-600 shadow-md'
+                                      : 'bg-white text-indigo-800 border-slate-200 hover:bg-indigo-50 hover:border-indigo-300'
+                                  }`}
+                                  title="LUAR KPM (PENGIKTIRAFAN)"
+                                >
+                                  <span className="truncate text-left text-[10px] sm:text-[11px] leading-tight">Luar (Pengiktirafan)</span>
+                                  <span className={`text-[10px] px-1.5 py-0.5 rounded-md font-black ml-1 shrink-0 ${
+                                    modalStatusFilter === 'LUAR KPM (PENGIKTIRAFAN)' ? 'bg-indigo-700 text-white' : 'bg-indigo-100 text-indigo-800'
+                                  }`}>
+                                    {countLuarPengiktirafan}
+                                  </span>
+                                </button>
+
+                                {/* Button LUAR KPM */}
+                                <button
+                                  type="button"
+                                  onClick={() => setModalStatusFilter('LUAR KPM')}
+                                  className={`px-3 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider flex items-center justify-between transition-all cursor-pointer border ${
+                                    modalStatusFilter === 'LUAR KPM'
+                                      ? 'bg-amber-600 text-white border-amber-600 shadow-md'
+                                      : 'bg-white text-amber-800 border-slate-200 hover:bg-amber-50 hover:border-amber-300'
+                                  }`}
+                                >
+                                  <span className="truncate">Luar KPM</span>
+                                  <span className={`text-[10px] px-2 py-0.5 rounded-md font-black ml-1 ${
+                                    modalStatusFilter === 'LUAR KPM' ? 'bg-amber-700 text-white' : 'bg-amber-100 text-amber-800'
+                                  }`}>
+                                    {countLuarKpm}
+                                  </span>
+                                </button>
+                              </div>
+                            </div>
+
+                            <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">
+                              {modalStatusFilter === 'SEMUA' 
+                                ? 'Pilih mana-mana pertandingan di bawah untuk menyemak senarai murid:' 
+                                : `Pertandingan berstatus "${modalStatusFilter}" (${keys.length} pertandingan):`}
+                            </p>
+
+                            {keys.length === 0 ? (
+                              <div className="py-12 text-center bg-slate-50 border border-dashed border-slate-200 rounded-2xl space-y-3">
+                                <p className="text-slate-400 font-bold uppercase text-xs tracking-widest italic">
+                                  Tiada pertandingan berstatus "{modalStatusFilter}" di peringkat ini.
+                                </p>
+                                <button 
+                                  type="button" 
+                                  onClick={() => setModalStatusFilter('SEMUA')}
+                                  className="px-4 py-2 bg-amber-500 text-slate-900 rounded-xl text-xs font-black uppercase tracking-wider hover:bg-amber-400 transition-colors cursor-pointer"
+                                >
+                                  Papar Semua Pertandingan
+                                </button>
+                              </div>
+                            ) : (
+                              keys.map((k, i) => {
+                                const competitionStudents = grouped[k];
+                                const firstItem = competitionStudents[0];
+                                const compStatus = normalizeStatus(firstItem.statusPertandingan);
+                                return (
+                                  <div 
+                                    key={i} 
+                                    onClick={() => {
+                                      setSelectedPertandinganInModal(k);
+                                      setModalSearchTerm('');
+                                    }}
+                                    className="flex flex-col sm:flex-row justify-between items-start sm:items-center p-5 rounded-2xl bg-slate-50 border border-slate-200 hover:border-amber-400 hover:bg-amber-50/20 hover:shadow-md cursor-pointer transition-all group gap-3"
+                                  >
+                                    <div>
+                                      <div className="font-black text-slate-900 text-sm md:text-base group-hover:text-amber-700 transition-colors">
+                                        {k}
+                                      </div>
+                                      <div className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mt-1.5 flex flex-wrap items-center gap-2">
+                                        <span className="bg-white border border-slate-200 px-2 py-0.5 rounded font-black text-slate-600">{firstItem.bahagian}</span>
+                                        <span className={`px-2 py-0.5 rounded font-black border ${getStatusBadgeClass(compStatus)}`}>
+                                          {compStatus}
+                                        </span>
+                                      </div>
+                                    </div>
+
+                                    <div className="flex items-center gap-3 self-end sm:self-auto shrink-0">
+                                      <div className="bg-white border border-slate-200 px-3.5 py-2 rounded-xl flex items-center gap-2 shadow-sm">
+                                        <Users className="w-4 h-4 text-amber-500" />
+                                        <span className="text-xs font-black text-slate-800">{competitionStudents.length} orang murid</span>
+                                      </div>
+                                      <span className="flex items-center gap-1 text-xs font-black text-amber-600 group-hover:translate-x-1 transition-transform">
+                                        Semak Murid <ChevronRight className="w-4 h-4" />
+                                      </span>
+                                    </div>
+                                  </div>
+                                );
+                              })
+                            )}
                           </div>
                         );
                       })()}
@@ -1046,6 +1210,7 @@ export default function App() {
                           setSelectedDashboardBahagian(null);
                           setSelectedPertandinganInModal(null);
                           setModalSearchTerm('');
+                          setModalStatusFilter('SEMUA');
                         }} 
                         className="p-2 text-slate-400 hover:bg-slate-200 hover:text-slate-700 rounded-full transition-colors cursor-pointer"
                       >
@@ -1066,12 +1231,24 @@ export default function App() {
                           return acc;
                         }, {} as Record<string, typeof filteredList>);
                         
-                        const keys = Object.keys(grouped).sort();
+                        const allKeys = Object.keys(grouped).sort();
+
+                        // Count by status
+                        const countSemua = allKeys.length;
+                        const countKpm = allKeys.filter(k => normalizeStatus(grouped[k][0]?.statusPertandingan) === 'KPM').length;
+                        const countLuarPengiktirafan = allKeys.filter(k => normalizeStatus(grouped[k][0]?.statusPertandingan) === 'LUAR KPM (PENGIKTIRAFAN)').length;
+                        const countLuarKpm = allKeys.filter(k => normalizeStatus(grouped[k][0]?.statusPertandingan) === 'LUAR KPM').length;
+
+                        // Filter by selected status
+                        const keys = modalStatusFilter === 'SEMUA'
+                          ? allKeys
+                          : allKeys.filter(k => normalizeStatus(grouped[k][0]?.statusPertandingan) === modalStatusFilter);
 
                         // If user selected a specific competition to drill down:
                         if (selectedPertandinganInModal) {
                           const students = grouped[selectedPertandinganInModal] || [];
                           const compInfo = students[0];
+                          const compStatus = normalizeStatus(compInfo?.statusPertandingan);
                           const filteredStudents = students.filter(s => 
                             (s.nama || '').toLowerCase().includes(modalSearchTerm.toLowerCase()) ||
                             (s.noKp || '').includes(modalSearchTerm) ||
@@ -1088,8 +1265,8 @@ export default function App() {
                                     <span className="bg-amber-500 text-slate-900 px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider shadow-sm">
                                       Peringkat {compInfo?.peringkat}
                                     </span>
-                                    <span className="bg-slate-800 text-white px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider shadow-sm">
-                                      {compInfo?.statusPertandingan || 'KPM'}
+                                    <span className={`${getStatusBadgeDark(compStatus)} px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider shadow-sm`}>
+                                      {compStatus}
                                     </span>
                                     <span className="bg-white border border-amber-500/30 text-slate-700 px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase tracking-wider shadow-sm">
                                       {selectedDashboardBahagian}
@@ -1109,7 +1286,7 @@ export default function App() {
 
                                     <button 
                                       type="button"
-                                      onClick={() => handleAddMoreToThisCompetition(selectedPertandinganInModal, selectedDashboardBahagian, compInfo?.peringkat, compInfo?.statusPertandingan)}
+                                      onClick={() => handleAddMoreToThisCompetition(selectedPertandinganInModal, selectedDashboardBahagian, compInfo?.peringkat, compStatus)}
                                       className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-4 py-2 bg-amber-500 hover:bg-amber-400 text-slate-900 rounded-xl text-xs font-black shadow-md transition-all cursor-pointer"
                                       title="Tambah murid baru ke pertandingan ini"
                                     >
@@ -1208,49 +1385,173 @@ export default function App() {
                         }
 
                         // Otherwise, show list of competitions in this bahagian:
-                        if (keys.length === 0) {
+                        if (allKeys.length === 0) {
                           return <div className="py-12 text-center text-slate-400 font-bold uppercase text-xs tracking-widest italic">Tiada Rekod Pertandingan</div>;
                         }
                         
                         return (
-                          <div className="space-y-4">
-                            <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">
-                              Pilih satu pertandingan di bawah untuk menyemak senarai nama murid yang terlibat:
-                            </p>
-                            {keys.map((k, i) => {
-                              const competitionStudents = grouped[k];
-                              const firstItem = competitionStudents[0];
-                              return (
-                                <div 
-                                  key={i} 
-                                  onClick={() => {
-                                    setSelectedPertandinganInModal(k);
-                                    setModalSearchTerm('');
-                                  }}
-                                  className="flex flex-col sm:flex-row justify-between items-start sm:items-center p-5 rounded-2xl bg-slate-50 border border-slate-200 hover:border-amber-400 hover:bg-amber-50/20 hover:shadow-md cursor-pointer transition-all group gap-3"
-                                >
-                                  <div>
-                                    <div className="font-black text-slate-900 text-sm md:text-base group-hover:text-amber-700 transition-colors">
-                                      {k}
-                                    </div>
-                                    <div className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mt-1.5 flex flex-wrap items-center gap-2">
-                                      <span className="bg-white border border-slate-200 px-2 py-0.5 rounded font-black text-slate-600">Peringkat {firstItem.peringkat}</span>
-                                      <span className="bg-amber-100 text-amber-800 px-2 py-0.5 rounded font-black">{firstItem.statusPertandingan || 'KPM'}</span>
-                                    </div>
+                          <div className="space-y-5">
+                            {/* Filter Status Pertandingan Button Group */}
+                            <div className="bg-slate-50 border border-slate-200/90 p-4 rounded-2xl space-y-3">
+                              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                                <div className="flex items-center gap-2">
+                                  <div className="p-1.5 bg-amber-500/10 text-amber-600 rounded-lg">
+                                    <Filter className="w-4 h-4" />
                                   </div>
-
-                                  <div className="flex items-center gap-3 self-end sm:self-auto shrink-0">
-                                    <div className="bg-white border border-slate-200 px-3.5 py-2 rounded-xl flex items-center gap-2 shadow-sm">
-                                      <Users className="w-4 h-4 text-amber-500" />
-                                      <span className="text-xs font-black text-slate-800">{competitionStudents.length} orang murid</span>
-                                    </div>
-                                    <span className="flex items-center gap-1 text-xs font-black text-amber-600 group-hover:translate-x-1 transition-transform">
-                                      Semak Murid <ChevronRight className="w-4 h-4" />
+                                  <div>
+                                    <span className="text-xs font-black text-slate-800 uppercase tracking-wider">
+                                      Pilih Status Pertandingan:
                                     </span>
+                                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
+                                      Tapis pertandingan mengikut punca pengiktirafan
+                                    </p>
                                   </div>
                                 </div>
-                              );
-                            })}
+                                {modalStatusFilter !== 'SEMUA' && (
+                                  <button 
+                                    type="button" 
+                                    onClick={() => setModalStatusFilter('SEMUA')}
+                                    className="self-start sm:self-auto text-[10px] font-black text-amber-700 hover:text-amber-800 uppercase tracking-wider underline cursor-pointer"
+                                  >
+                                    Set Semula (Papar Semua {countSemua})
+                                  </button>
+                                )}
+                              </div>
+
+                              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                                {/* Button SEMUA */}
+                                <button
+                                  type="button"
+                                  onClick={() => setModalStatusFilter('SEMUA')}
+                                  className={`px-3 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider flex items-center justify-between transition-all cursor-pointer border ${
+                                    modalStatusFilter === 'SEMUA'
+                                      ? 'bg-slate-900 text-white border-slate-900 shadow-md'
+                                      : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100 hover:border-slate-300'
+                                  }`}
+                                >
+                                  <span>Semua</span>
+                                  <span className={`text-[10px] px-2 py-0.5 rounded-md font-black ${
+                                    modalStatusFilter === 'SEMUA' ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-600'
+                                  }`}>
+                                    {countSemua}
+                                  </span>
+                                </button>
+
+                                {/* Button KPM */}
+                                <button
+                                  type="button"
+                                  onClick={() => setModalStatusFilter('KPM')}
+                                  className={`px-3 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider flex items-center justify-between transition-all cursor-pointer border ${
+                                    modalStatusFilter === 'KPM'
+                                      ? 'bg-emerald-600 text-white border-emerald-600 shadow-md'
+                                      : 'bg-white text-emerald-800 border-slate-200 hover:bg-emerald-50 hover:border-emerald-300'
+                                  }`}
+                                >
+                                  <span className="truncate">KPM</span>
+                                  <span className={`text-[10px] px-2 py-0.5 rounded-md font-black ml-1 ${
+                                    modalStatusFilter === 'KPM' ? 'bg-emerald-700 text-white' : 'bg-emerald-100 text-emerald-800'
+                                  }`}>
+                                    {countKpm}
+                                  </span>
+                                </button>
+
+                                {/* Button LUAR KPM (PENGIKTIRAFAN) */}
+                                <button
+                                  type="button"
+                                  onClick={() => setModalStatusFilter('LUAR KPM (PENGIKTIRAFAN)')}
+                                  className={`px-2.5 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider flex items-center justify-between transition-all cursor-pointer border ${
+                                    modalStatusFilter === 'LUAR KPM (PENGIKTIRAFAN)'
+                                      ? 'bg-indigo-600 text-white border-indigo-600 shadow-md'
+                                      : 'bg-white text-indigo-800 border-slate-200 hover:bg-indigo-50 hover:border-indigo-300'
+                                  }`}
+                                  title="LUAR KPM (PENGIKTIRAFAN)"
+                                >
+                                  <span className="truncate text-left text-[10px] sm:text-[11px] leading-tight">Luar (Pengiktirafan)</span>
+                                  <span className={`text-[10px] px-1.5 py-0.5 rounded-md font-black ml-1 shrink-0 ${
+                                    modalStatusFilter === 'LUAR KPM (PENGIKTIRAFAN)' ? 'bg-indigo-700 text-white' : 'bg-indigo-100 text-indigo-800'
+                                  }`}>
+                                    {countLuarPengiktirafan}
+                                  </span>
+                                </button>
+
+                                {/* Button LUAR KPM */}
+                                <button
+                                  type="button"
+                                  onClick={() => setModalStatusFilter('LUAR KPM')}
+                                  className={`px-3 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider flex items-center justify-between transition-all cursor-pointer border ${
+                                    modalStatusFilter === 'LUAR KPM'
+                                      ? 'bg-amber-600 text-white border-amber-600 shadow-md'
+                                      : 'bg-white text-amber-800 border-slate-200 hover:bg-amber-50 hover:border-amber-300'
+                                  }`}
+                                >
+                                  <span className="truncate">Luar KPM</span>
+                                  <span className={`text-[10px] px-2 py-0.5 rounded-md font-black ml-1 ${
+                                    modalStatusFilter === 'LUAR KPM' ? 'bg-amber-700 text-white' : 'bg-amber-100 text-amber-800'
+                                  }`}>
+                                    {countLuarKpm}
+                                  </span>
+                                </button>
+                              </div>
+                            </div>
+
+                            <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">
+                              {modalStatusFilter === 'SEMUA' 
+                                ? 'Pilih mana-mana pertandingan di bawah untuk menyemak senarai murid:' 
+                                : `Pertandingan berstatus "${modalStatusFilter}" (${keys.length} pertandingan):`}
+                            </p>
+
+                            {keys.length === 0 ? (
+                              <div className="py-12 text-center bg-slate-50 border border-dashed border-slate-200 rounded-2xl space-y-3">
+                                <p className="text-slate-400 font-bold uppercase text-xs tracking-widest italic">
+                                  Tiada pertandingan berstatus "{modalStatusFilter}" di bahagian ini.
+                                </p>
+                                <button 
+                                  type="button" 
+                                  onClick={() => setModalStatusFilter('SEMUA')}
+                                  className="px-4 py-2 bg-amber-500 text-slate-900 rounded-xl text-xs font-black uppercase tracking-wider hover:bg-amber-400 transition-colors cursor-pointer"
+                                >
+                                  Papar Semua Pertandingan
+                                </button>
+                              </div>
+                            ) : (
+                              keys.map((k, i) => {
+                                const competitionStudents = grouped[k];
+                                const firstItem = competitionStudents[0];
+                                const compStatus = normalizeStatus(firstItem.statusPertandingan);
+                                return (
+                                  <div 
+                                    key={i} 
+                                    onClick={() => {
+                                      setSelectedPertandinganInModal(k);
+                                      setModalSearchTerm('');
+                                    }}
+                                    className="flex flex-col sm:flex-row justify-between items-start sm:items-center p-5 rounded-2xl bg-slate-50 border border-slate-200 hover:border-amber-400 hover:bg-amber-50/20 hover:shadow-md cursor-pointer transition-all group gap-3"
+                                  >
+                                    <div>
+                                      <div className="font-black text-slate-900 text-sm md:text-base group-hover:text-amber-700 transition-colors">
+                                        {k}
+                                      </div>
+                                      <div className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mt-1.5 flex flex-wrap items-center gap-2">
+                                        <span className="bg-white border border-slate-200 px-2 py-0.5 rounded font-black text-slate-600">Peringkat {firstItem.peringkat}</span>
+                                        <span className={`px-2 py-0.5 rounded font-black border ${getStatusBadgeClass(compStatus)}`}>
+                                          {compStatus}
+                                        </span>
+                                      </div>
+                                    </div>
+
+                                    <div className="flex items-center gap-3 self-end sm:self-auto shrink-0">
+                                      <div className="bg-white border border-slate-200 px-3.5 py-2 rounded-xl flex items-center gap-2 shadow-sm">
+                                        <Users className="w-4 h-4 text-amber-500" />
+                                        <span className="text-xs font-black text-slate-800">{competitionStudents.length} orang murid</span>
+                                      </div>
+                                      <span className="flex items-center gap-1 text-xs font-black text-amber-600 group-hover:translate-x-1 transition-transform">
+                                        Semak Murid <ChevronRight className="w-4 h-4" />
+                                      </span>
+                                    </div>
+                                  </div>
+                                );
+                              })
+                            )}
                           </div>
                         );
                       })()}
@@ -1916,7 +2217,9 @@ export default function App() {
                         <div className="font-bold text-slate-700 text-xs uppercase max-w-[250px] truncate" title={r.pertandingan}>{r.pertandingan}</div>
                         <div className="flex items-center gap-2 mt-1.5">
                           <div className="text-[9px] font-black text-slate-500 uppercase tracking-widest truncate max-w-[150px]">{r.bahagian}</div>
-                          <span className="bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded text-[8px] font-black tracking-widest">{r.statusPertandingan || 'KPM'}</span>
+                          <span className={`px-2 py-0.5 rounded text-[8px] font-black tracking-wider border ${getStatusBadgeClass(r.statusPertandingan)}`}>
+                            {normalizeStatus(r.statusPertandingan)}
+                          </span>
                         </div>
                       </td>
                       <td className="px-6 py-4">
