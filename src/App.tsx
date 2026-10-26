@@ -108,6 +108,8 @@ export default function App() {
   const [searchTerm, setSearchTerm] = useState('');
   const [filterAliran, setFilterAliran] = useState('SEMUA');
   const [filterKelas, setFilterKelas] = useState('SEMUA');
+  const [filterStatus, setFilterStatus] = useState('SEMUA');
+  const [filterBahagian, setFilterBahagian] = useState('SEMUA');
   const [editingId, setEditingId] = useState<string | null>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [quotaWarning, setQuotaWarning] = useState(false);
@@ -206,9 +208,11 @@ export default function App() {
                             (r.noKp || '').includes(searchTerm);
       const matchesAliran = filterAliran === 'SEMUA' || r.aliran === filterAliran;
       const matchesKelas = filterKelas === 'SEMUA' || r.kelas === filterKelas;
-      return matchesYear && matchesSearch && matchesAliran && matchesKelas;
+      const matchesStatus = filterStatus === 'SEMUA' || normalizeStatus(r.statusPertandingan) === filterStatus;
+      const matchesBahagian = filterBahagian === 'SEMUA' || r.bahagian === filterBahagian;
+      return matchesYear && matchesSearch && matchesAliran && matchesKelas && matchesStatus && matchesBahagian;
     });
-  }, [rekodPajsk, selectedYear, searchTerm, filterAliran, filterKelas]);
+  }, [rekodPajsk, selectedYear, searchTerm, filterAliran, filterKelas, filterStatus, filterBahagian]);
 
   const switchView = (view: 'dashboard' | 'kemasukan' | 'senarai') => {
     setActiveView(view);
@@ -485,7 +489,7 @@ export default function App() {
       "KELAS": r.kelas,
       "BAHAGIAN": r.bahagian,
       "AKTIVITI / PERTANDINGAN": r.pertandingan,
-      "STATUS PERTANDINGAN": r.statusPertandingan || 'KPM',
+      "STATUS PERTANDINGAN": normalizeStatus(r.statusPertandingan),
       "PERINGKAT": r.peringkat,
       "PENCAPAIAN": r.pencapaian,
       "TAHUN": r.tahunKalendar
@@ -494,7 +498,10 @@ export default function App() {
     const ws = XLSX.utils.json_to_sheet(dataToExport);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Rekod PAJSK");
-    XLSX.writeFile(wb, `REKOD_PENYERTAAN_SKAUK_${selectedYear}.xlsx`);
+    
+    const statusSuffix = filterStatus !== 'SEMUA' ? `_${filterStatus.replace(/[^a-zA-Z0-9]/g, '_')}` : '';
+    const bahagianSuffix = filterBahagian !== 'SEMUA' ? `_${filterBahagian.replace(/[^a-zA-Z0-9]/g, '_')}` : '';
+    XLSX.writeFile(wb, `REKOD_PENYERTAAN_SKAUK_${selectedYear}${statusSuffix}${bahagianSuffix}.xlsx`);
   };
 
   const exportPDF = () => {
@@ -502,7 +509,16 @@ export default function App() {
     docPdf.setFontSize(14);
     docPdf.text(`REKOD PENCAPAIAN KO-KURIKULUM SKAUK (${selectedYear})`, 14, 15);
     docPdf.setFontSize(9);
-    docPdf.text(`Jumlah Rekod: ${filteredData.length} | Tarikh Cetakan: ${new Date().toLocaleDateString('ms-MY')}`, 14, 22);
+    
+    const filterInfo = [
+      filterStatus !== 'SEMUA' ? `Status: ${filterStatus}` : '',
+      filterBahagian !== 'SEMUA' ? `Bahagian: ${filterBahagian}` : '',
+      filterAliran !== 'SEMUA' ? `Aliran: ${filterAliran}` : '',
+      filterKelas !== 'SEMUA' ? `Kelas: ${filterKelas}` : ''
+    ].filter(Boolean).join(' • ');
+
+    const filterSubtitle = filterInfo ? ` | Penapis: ${filterInfo}` : '';
+    docPdf.text(`Jumlah Rekod: ${filteredData.length}${filterSubtitle} | Tarikh Cetakan: ${new Date().toLocaleDateString('ms-MY')}`, 14, 22);
 
     const tableRows = filteredData.map((r, i) => [
       i + 1,
@@ -511,7 +527,7 @@ export default function App() {
       `${r.aliran} (${r.kelas})`,
       r.bahagian,
       r.pertandingan,
-      r.statusPertandingan || 'KPM',
+      normalizeStatus(r.statusPertandingan),
       r.peringkat,
       r.pencapaian
     ]);
@@ -525,7 +541,9 @@ export default function App() {
       headStyles: { fillColor: [245, 158, 11], textColor: [0, 0, 0], fontStyle: 'bold' }
     });
 
-    docPdf.save(`LAPORAN_SKAUK_${selectedYear}.pdf`);
+    const statusSuffix = filterStatus !== 'SEMUA' ? `_${filterStatus.replace(/[^a-zA-Z0-9]/g, '_')}` : '';
+    const bahagianSuffix = filterBahagian !== 'SEMUA' ? `_${filterBahagian.replace(/[^a-zA-Z0-9]/g, '_')}` : '';
+    docPdf.save(`LAPORAN_SKAUK_${selectedYear}${statusSuffix}${bahagianSuffix}.pdf`);
   };
 
   // Helper to copy student names from competition modal
@@ -2136,50 +2154,189 @@ export default function App() {
             </div>
 
             {/* Filter Bar */}
-            <div className="bg-white p-4 md:p-6 rounded-[32px] shadow-sm border border-slate-100 flex flex-col md:flex-row gap-4 items-center justify-between">
-              <div className="flex flex-1 flex-wrap gap-3 w-full">
-                <div className="relative flex-1 min-w-[200px]">
+            <div className="bg-white p-5 md:p-6 rounded-[32px] shadow-sm border border-slate-100 space-y-4">
+              {/* Row 1: Search & Export Actions */}
+              <div className="flex flex-col md:flex-row gap-3 items-stretch md:items-center justify-between">
+                <div className="relative flex-1">
                   <Search className="w-5 h-5 text-slate-400 absolute left-4 top-3.5" />
                   <input 
                     type="text" 
                     placeholder="Cari murid, IC atau pertandingan..." 
                     value={searchTerm} 
                     onChange={(e) => setSearchTerm(e.target.value)} 
-                    className="w-full pl-12 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-xs outline-none focus:border-amber-500" 
+                    className="w-full pl-12 pr-10 py-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-xs outline-none focus:border-amber-500 focus:bg-white transition-all shadow-inner" 
                   />
+                  {searchTerm && (
+                    <button 
+                      type="button"
+                      onClick={() => setSearchTerm('')} 
+                      className="absolute right-3.5 top-3.5 text-slate-400 hover:text-slate-600 cursor-pointer"
+                      title="Padam carian"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  )}
                 </div>
-                <select 
-                  onChange={(e) => setFilterAliran(e.target.value)} 
-                  value={filterAliran} 
-                  className="flex-1 md:flex-none bg-slate-50 border border-slate-200 px-4 py-3 rounded-xl font-bold text-xs outline-none focus:border-amber-500 min-w-[140px] cursor-pointer"
-                >
-                  <option value="SEMUA">SEMUA ALIRAN</option>
-                  {senaraiAliran.map(a => <option key={a} value={a}>{a.toUpperCase()}</option>)}
-                </select>
-                <select 
-                  onChange={(e) => setFilterKelas(e.target.value)} 
-                  value={filterKelas} 
-                  className="flex-1 md:flex-none bg-slate-50 border border-slate-200 px-4 py-3 rounded-xl font-bold text-xs outline-none focus:border-amber-500 min-w-[140px] cursor-pointer"
-                >
-                  <option value="SEMUA">SEMUA KELAS</option>
-                  {senaraiKelas.map(k => <option key={k} value={k}>KELAS {k}</option>)}
-                </select>
+
+                <div className="flex items-center gap-2.5 shrink-0">
+                  <button 
+                    type="button"
+                    onClick={exportExcel} 
+                    className="flex-1 sm:flex-none flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-5 py-3 rounded-xl font-black text-[11px] uppercase tracking-wider shadow-sm transition-all cursor-pointer active:scale-95"
+                    title="Muat Turun Format Excel mengikut penapis yang dipilih"
+                  >
+                    <FileSpreadsheet className="w-4 h-4 text-emerald-200" />
+                    <span>Muat Turun Excel</span>
+                  </button>
+                  <button 
+                    type="button"
+                    onClick={exportPDF} 
+                    className="flex-1 sm:flex-none flex items-center justify-center gap-2 bg-rose-600 hover:bg-rose-700 text-white px-5 py-3 rounded-xl font-black text-[11px] uppercase tracking-wider shadow-sm transition-all cursor-pointer active:scale-95"
+                    title="Muat Turun Format PDF mengikut penapis yang dipilih"
+                  >
+                    <FileText className="w-4 h-4 text-rose-200" />
+                    <span>Muat Turun PDF</span>
+                  </button>
+                </div>
               </div>
 
-              <div className="flex gap-3 w-full md:w-auto">
-                <button 
-                  onClick={exportExcel} 
-                  className="flex-1 md:flex-none flex items-center justify-center gap-2 bg-emerald-50 text-emerald-700 px-6 py-3 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-emerald-100 transition-colors cursor-pointer"
-                >
-                  <FileSpreadsheet className="w-4 h-4" /> EXCEL
-                </button>
-                <button 
-                  onClick={exportPDF} 
-                  className="flex-1 md:flex-none flex items-center justify-center gap-2 bg-rose-50 text-rose-700 px-6 py-3 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-rose-100 transition-colors cursor-pointer"
-                >
-                  <FileText className="w-4 h-4" /> PDF
-                </button>
+              {/* Row 2: Filter Select Dropdowns */}
+              <div className="pt-3 border-t border-slate-100 flex flex-wrap items-center gap-2.5">
+                <div className="flex items-center gap-1.5 text-slate-400 text-xs font-black uppercase tracking-wider pr-1">
+                  <Filter className="w-3.5 h-3.5 text-amber-500" />
+                  <span className="text-[11px] text-slate-600">Penapis:</span>
+                </div>
+
+                {/* Filter Status Pertandingan */}
+                <div className="flex-1 min-w-[170px] sm:flex-initial">
+                  <select 
+                    onChange={(e) => setFilterStatus(e.target.value)} 
+                    value={filterStatus} 
+                    className={`w-full bg-slate-50 border px-3.5 py-2.5 rounded-xl font-bold text-xs outline-none cursor-pointer transition-all ${
+                      filterStatus !== 'SEMUA' 
+                        ? 'border-indigo-500 bg-indigo-50 text-indigo-900 font-black ring-2 ring-indigo-200' 
+                        : 'border-slate-200 text-slate-700 hover:border-slate-300'
+                    }`}
+                  >
+                    <option value="SEMUA">Semua Status (KPM / Luar)</option>
+                    {senaraiStatusPertandingan.map(s => (
+                      <option key={s} value={s}>{s}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Filter Bahagian Unit */}
+                <div className="flex-1 min-w-[180px] sm:flex-initial">
+                  <select 
+                    onChange={(e) => setFilterBahagian(e.target.value)} 
+                    value={filterBahagian} 
+                    className={`w-full bg-slate-50 border px-3.5 py-2.5 rounded-xl font-bold text-xs outline-none cursor-pointer transition-all ${
+                      filterBahagian !== 'SEMUA' 
+                        ? 'border-amber-500 bg-amber-50 text-amber-950 font-black ring-2 ring-amber-200' 
+                        : 'border-slate-200 text-slate-700 hover:border-slate-300'
+                    }`}
+                  >
+                    <option value="SEMUA">Semua Bahagian Unit</option>
+                    {senaraiBahagian.map(b => (
+                      <option key={b} value={b}>{b}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Filter Aliran */}
+                <div className="flex-1 min-w-[130px] sm:flex-initial">
+                  <select 
+                    onChange={(e) => setFilterAliran(e.target.value)} 
+                    value={filterAliran} 
+                    className={`w-full bg-slate-50 border px-3.5 py-2.5 rounded-xl font-bold text-xs outline-none cursor-pointer transition-all ${
+                      filterAliran !== 'SEMUA' 
+                        ? 'border-amber-500 bg-amber-50 text-amber-950 font-black ring-2 ring-amber-200' 
+                        : 'border-slate-200 text-slate-700 hover:border-slate-300'
+                    }`}
+                  >
+                    <option value="SEMUA">Semua Aliran</option>
+                    {senaraiAliran.map(a => (
+                      <option key={a} value={a}>{a}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Filter Kelas */}
+                <div className="flex-1 min-w-[130px] sm:flex-initial">
+                  <select 
+                    onChange={(e) => setFilterKelas(e.target.value)} 
+                    value={filterKelas} 
+                    className={`w-full bg-slate-50 border px-3.5 py-2.5 rounded-xl font-bold text-xs outline-none cursor-pointer transition-all ${
+                      filterKelas !== 'SEMUA' 
+                        ? 'border-amber-500 bg-amber-50 text-amber-950 font-black ring-2 ring-amber-200' 
+                        : 'border-slate-200 text-slate-700 hover:border-slate-300'
+                    }`}
+                  >
+                    <option value="SEMUA">Semua Kelas</option>
+                    {senaraiKelas.map(k => (
+                      <option key={k} value={k}>Kelas {k}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Reset Filters button if any filter is active */}
+                {(filterStatus !== 'SEMUA' || filterBahagian !== 'SEMUA' || filterAliran !== 'SEMUA' || filterKelas !== 'SEMUA' || searchTerm) && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setFilterStatus('SEMUA');
+                      setFilterBahagian('SEMUA');
+                      setFilterAliran('SEMUA');
+                      setFilterKelas('SEMUA');
+                      setSearchTerm('');
+                    }}
+                    className="flex items-center gap-1.5 px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl text-xs font-bold transition-all cursor-pointer"
+                    title="Set Semula Semua Penapis"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                    <span>Set Semula</span>
+                  </button>
+                )}
               </div>
+
+              {/* Active Filter Indicators / Summary Bar for Quick Verification & Download Context */}
+              {(filterStatus !== 'SEMUA' || filterBahagian !== 'SEMUA' || filterAliran !== 'SEMUA' || filterKelas !== 'SEMUA') && (
+                <div className="flex flex-wrap items-center gap-2 pt-1 text-xs">
+                  <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">Penapis Dipilih Untuk Muat Turun ({filteredData.length} rekod):</span>
+                  {filterStatus !== 'SEMUA' && (
+                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[10px] font-black border bg-indigo-50 text-indigo-700 border-indigo-200 shadow-xs">
+                      <span>Status: {filterStatus}</span>
+                      <button type="button" onClick={() => setFilterStatus('SEMUA')} className="hover:text-indigo-950 cursor-pointer">
+                        <X className="w-3 h-3" />
+                      </button>
+                    </span>
+                  )}
+                  {filterBahagian !== 'SEMUA' && (
+                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[10px] font-black border bg-amber-50 text-amber-800 border-amber-200 shadow-xs">
+                      <span>Bahagian: {filterBahagian}</span>
+                      <button type="button" onClick={() => setFilterBahagian('SEMUA')} className="hover:text-amber-950 cursor-pointer">
+                        <X className="w-3 h-3" />
+                      </button>
+                    </span>
+                  )}
+                  {filterAliran !== 'SEMUA' && (
+                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[10px] font-black border bg-slate-100 text-slate-700 border-slate-300 shadow-xs">
+                      <span>Aliran: {filterAliran}</span>
+                      <button type="button" onClick={() => setFilterAliran('SEMUA')} className="hover:text-slate-950 cursor-pointer">
+                        <X className="w-3 h-3" />
+                      </button>
+                    </span>
+                  )}
+                  {filterKelas !== 'SEMUA' && (
+                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[10px] font-black border bg-slate-100 text-slate-700 border-slate-300 shadow-xs">
+                      <span>Kelas: {filterKelas}</span>
+                      <button type="button" onClick={() => setFilterKelas('SEMUA')} className="hover:text-slate-950 cursor-pointer">
+                        <X className="w-3 h-3" />
+                      </button>
+                    </span>
+                  )}
+                </div>
+              )}
             </div>
 
             {/* Records Table */}
