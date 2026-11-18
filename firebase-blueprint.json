@@ -1,0 +1,121 @@
+{
+  "entities": {
+    "Pencapaian": {
+      "title": "Rekod Pencapaian Murid",
+      "description": "Rekod penyertaan dan pencapaian ko-kurikulum murid SKAUK termasuk tarikh aktiviti dan lampiran surat pengiktirafan KPM.",
+      "type": "object",
+      "properties": {
+        "nama": {
+          "type": "string",
+          "description": "Nama penuh murid",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "noKp": {
+          "type": "string",
+          "description": "Nombor kad pengenalan atau MyKid murid",
+          "maxLength": 20
+        },
+        "aliran": {
+          "type": "string",
+          "description": "Aliran tahun murid",
+          "maxLength": 50
+        },
+        "kelas": {
+          "type": "string",
+          "description": "Nama kelas murid",
+          "maxLength": 50
+        },
+        "bahagian": {
+          "type": "string",
+          "description": "Bahagian atau unit ko-kurikulum",
+          "maxLength": 100
+        },
+        "pertandingan": {
+          "type": "string",
+          "description": "Nama aktiviti atau pertandingan",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "statusPertandingan": {
+          "type": "string",
+          "description": "Status pertandingan (KPM, LUAR KPM (PENGIKTIRAFAN), atau LUAR KPM)",
+          "maxLength": 50
+        },
+        "peringkat": {
+          "type": "string",
+          "description": "Peringkat penyertaan",
+          "maxLength": 50
+        },
+        "pencapaian": {
+          "type": "string",
+          "description": "Pencapaian yang diperoleh",
+          "maxLength": 50
+        },
+        "tahunKalendar": {
+          "type": "string",
+          "description": "Tahun sesi kalendar (4 digit)",
+          "minLength": 4,
+          "maxLength": 4
+        },
+        "jenisTarikh": {
+          "type": "string",
+          "description": "Jenis tarikh aktiviti: satu_hari atau tempoh",
+          "maxLength": 20
+        },
+        "tarikhMula": {
+          "type": "string",
+          "description": "Tarikh aktiviti atau tarikh mula (YYYY-MM-DD)",
+          "maxLength": 20
+        },
+        "tarikhTamat": {
+          "type": "string",
+          "description": "Tarikh tamat aktiviti bagi tempoh masa (YYYY-MM-DD)",
+          "maxLength": 20
+        },
+        "suratPengiktirafanNama": {
+          "type": "string",
+          "description": "Nama fail surat pengiktirafan KPM",
+          "maxLength": 255
+        },
+        "suratPengiktirafanData": {
+          "type": "string",
+          "description": "Kandungan lampiran surat pengiktirafan KPM (Data URL termampat)",
+          "maxLength": 700000
+        },
+        "creatorId": {
+          "type": "string",
+          "description": "Pengecam pencipta rekod",
+          "maxLength": 128
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Cap masa pelayan Firestore"
+        }
+      },
+      "required": [
+        "nama",
+        "noKp",
+        "aliran",
+        "kelas",
+        "bahagian",
+        "pertandingan",
+        "statusPertandingan",
+        "peringkat",
+        "pencapaian",
+        "tahunKalendar",
+        "updatedAt",
+        "creatorId"
+      ]
+    }
+  },
+  "firestore": {
+    "/pencapaian/{pencapaianId}": {
+      "schema": {
+        "$ref": "#/entities/Pencapaian"
+      },
+      "description": "Koleksi utama rekod penyertaan dan pencapaian murid SKAUK."
+    }
+  }
+}

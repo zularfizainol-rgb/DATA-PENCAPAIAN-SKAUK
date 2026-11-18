@@ -10,7 +10,13 @@ service cloud.firestore {
 
     function isValidPencapaian(data) {
       return data.keys().hasAll(['nama', 'noKp', 'aliran', 'kelas', 'bahagian', 'pertandingan', 'statusPertandingan', 'peringkat', 'pencapaian', 'tahunKalendar', 'updatedAt', 'creatorId'])
-        && data.keys().size() == 12
+        && data.keys().hasOnly([
+          'nama', 'noKp', 'aliran', 'kelas', 'bahagian', 'pertandingan',
+          'statusPertandingan', 'peringkat', 'pencapaian', 'tahunKalendar',
+          'updatedAt', 'creatorId',
+          'jenisTarikh', 'tarikhMula', 'tarikhTamat',
+          'suratPengiktirafanNama', 'suratPengiktirafanData'
+        ])
         && data.nama is string && data.nama.size() > 0 && data.nama.size() <= 200
         && data.noKp is string && data.noKp.size() <= 20
         && data.aliran is string && data.aliran.size() <= 50
@@ -22,7 +28,12 @@ service cloud.firestore {
         && data.pencapaian is string && data.pencapaian.size() <= 50
         && data.tahunKalendar is string && data.tahunKalendar.size() == 4
         && data.updatedAt is timestamp
-        && data.creatorId is string;
+        && data.creatorId is string && data.creatorId.size() <= 128
+        && (!('jenisTarikh' in data) || (data.jenisTarikh is string && data.jenisTarikh.size() <= 20))
+        && (!('tarikhMula' in data) || (data.tarikhMula is string && data.tarikhMula.size() <= 20))
+        && (!('tarikhTamat' in data) || (data.tarikhTamat is string && data.tarikhTamat.size() <= 20))
+        && (!('suratPengiktirafanNama' in data) || (data.suratPengiktirafanNama is string && data.suratPengiktirafanNama.size() <= 255))
+        && (!('suratPengiktirafanData' in data) || (data.suratPengiktirafanData is string && data.suratPengiktirafanData.size() <= 700000));
     }
 
     match /pencapaian/{pencapaianId} {
@@ -36,7 +47,13 @@ service cloud.firestore {
       allow update: if true
         && isValidId(pencapaianId)
         && isValidPencapaian(incoming())
-        && incoming().diff(existing()).affectedKeys().hasOnly(['nama', 'noKp', 'aliran', 'kelas', 'bahagian', 'pertandingan', 'statusPertandingan', 'peringkat', 'pencapaian', 'tahunKalendar', 'updatedAt'])
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'nama', 'noKp', 'aliran', 'kelas', 'bahagian', 'pertandingan',
+          'statusPertandingan', 'peringkat', 'pencapaian', 'tahunKalendar',
+          'updatedAt',
+          'jenisTarikh', 'tarikhMula', 'tarikhTamat',
+          'suratPengiktirafanNama', 'suratPengiktirafanData'
+        ])
         && incoming().creatorId == existing().creatorId
         && incoming().updatedAt == request.time;
 
