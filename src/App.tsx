@@ -401,9 +401,39 @@ export default function App() {
           await loadFromGoogleSheets(sheetConfig, false);
         }
       }
-    } catch (err) {
+    } catch (err: unknown) {
       console.error('Login Google gagal:', err);
-      showNotice('error', 'Log masuk Google dibatalkan atau gagal. Sila benarkan tetingkap pop-up dan akses Google Sheets.');
+      const authErr = err as { code?: string; message?: string } | null;
+      const code = authErr?.code || '';
+      const currentHost = typeof window !== 'undefined' ? window.location.hostname : '';
+
+      if (code === 'auth/unauthorized-domain') {
+        showNotice(
+          'error',
+          `Domain belum dibenarkan (${code}): Domain "${currentHost}" perlu ditambah ke Firebase Console > Authentication > Settings > Authorized domains.`
+        );
+      } else if (code === 'auth/popup-blocked') {
+        showNotice(
+          'error',
+          `Tetingkap pop-up disekat pelayar (${code}). Sila benarkan Pop-ups & redirects untuk laman "${currentHost}" dan cuba lagi.`
+        );
+      } else if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') {
+        showNotice(
+          'error',
+          `Log masuk Google ditutup sebelum selesai (${code}). Pastikan anda memilih akaun Google dan klik Benarkan (Allow) pada akses Google Sheets.`
+        );
+      } else if (code === 'auth/operation-not-allowed') {
+        showNotice(
+          'error',
+          `Penyedia log masuk Google belum diaktifkan di Firebase Console (${code}). Sila aktifkan Google Sign-In di Firebase Authentication.`
+        );
+      } else {
+        const detail = code || (authErr?.message ? authErr.message : 'Ralat tidak diketahui');
+        showNotice(
+          'error',
+          `Log masuk Google gagal (${detail}). Sila semak pop-up pelayar, Authorized Domains di Firebase, dan senarai Test Users / OAuth di Google Cloud.`
+        );
+      }
     } finally {
       setIsLoggingInGoogle(false);
     }
