@@ -83,6 +83,15 @@
           "description": "Kandungan lampiran surat pengiktirafan KPM (Data URL termampat)",
           "maxLength": 700000
         },
+        "guruPengiring": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 150
+          },
+          "maxItems": 20,
+          "description": "Senarai nama guru pengiring / guru pembimbing / jurulatih (diisi oleh guru sahaja)"
+        },
         "creatorId": {
           "type": "string",
           "description": "Pengecam pencipta rekod",

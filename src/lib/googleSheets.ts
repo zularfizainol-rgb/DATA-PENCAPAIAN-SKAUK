@@ -23,6 +23,7 @@ export interface SheetRecord {
   tarikhTamat?: string;
   suratPengiktirafanNama?: string;
   suratPengiktirafanData?: string;
+  guruPengiring?: string[];
   updatedAt?: unknown;
   creatorId?: string;
 }
@@ -155,8 +156,11 @@ export function recordToSheetRow(r: SheetRecord, padAttachmentCols = false): str
   const isRecognized = (r.statusPertandingan || '').toUpperCase().includes('PENGIKTIRAFAN');
   const suratNama = isRecognized ? (r.suratPengiktirafanNama || '').trim() : '';
   const suratData = isRecognized ? (r.suratPengiktirafanData || '').trim() : '';
+  const guruList = (r.guruPengiring || []).map(g => g.trim().toUpperCase()).filter(Boolean);
+  const guruStr = guruList.join(', ');
+  const mustPad = padAttachmentCols || guruStr.length > 0;
 
-  return [
+  const baseCols = [
     r.id,
     (r.nama || '').trim().toUpperCase(),
     (r.noKp || '').trim(),
@@ -172,8 +176,13 @@ export function recordToSheetRow(r: SheetRecord, padAttachmentCols = false): str
     r.creatorId || 'guru_skauk',
     formatTarikhForSheet(r),
     suratNama,
-    ...splitAttachmentChunks(suratData, padAttachmentCols)
+    ...splitAttachmentChunks(suratData, mustPad)
   ];
+
+  if (mustPad) {
+    baseCols.push(guruStr);
+  }
+  return baseCols;
 }
 
 async function sheetsFetch<T>(url: string, accessToken: string, options?: RequestInit): Promise<T> {
@@ -258,10 +267,47 @@ export async function inspectSpreadsheet(
   return { config, hasHeaders, firstRowValues };
 }
 
+async function ensureMinSheetColumns(config: SheetConfig, minColumns: number, accessToken: string): Promise<void> {
+  try {
+    const meta = await sheetsFetch<{
+      sheets: Array<{ properties: { sheetId: number; gridProperties?: { columnCount?: number } } }>;
+    }>(
+      `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(config.spreadsheetId)}?fields=sheets.properties(sheetId,gridProperties.columnCount)`,
+      accessToken
+    );
+    const targetSheet = meta.sheets?.find(s => s.properties.sheetId === config.sheetId);
+    const currentCols = targetSheet?.properties?.gridProperties?.columnCount ?? 26;
+    if (currentCols < minColumns) {
+      await sheetsFetch(
+        `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(config.spreadsheetId)}:batchUpdate`,
+        accessToken,
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            requests: [
+              {
+                appendDimension: {
+                  sheetId: config.sheetId,
+                  dimension: 'COLUMNS',
+                  length: minColumns - currentCols
+                }
+              }
+            ]
+          })
+        }
+      );
+    }
+  } catch (err) {
+    console.warn('Amaran peluasan kolum Google Sheet:', err);
+  }
+}
+
 /**
- * Write standard header row to A1:P1 and freeze row 1
+ * Write standard header row to A1:P1 + AA1 (Guru Pengiring) and freeze row 1
  */
 export async function ensureSheetHeaders(config: SheetConfig, accessToken: string): Promise<void> {
+  await ensureMinSheetColumns(config, 28, accessToken);
+
   const range = `${escapeSheetTitle(config.sheetTitle)}!A1:P1`;
   await sheetsFetch(
     `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(config.spreadsheetId)}/values/${encodeURIComponent(range)}?valueInputOption=USER_ENTERED`,
@@ -275,6 +321,25 @@ export async function ensureSheetHeaders(config: SheetConfig, accessToken: strin
       })
     }
   );
+
+  // Tulis header kolum AA1 untuk Guru Pengiring / Pembimbing / Jurulatih
+  const guruHeaderRange = `${escapeSheetTitle(config.sheetTitle)}!AA1`;
+  try {
+    await sheetsFetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(config.spreadsheetId)}/values/${encodeURIComponent(guruHeaderRange)}?valueInputOption=USER_ENTERED`,
+      accessToken,
+      {
+        method: 'PUT',
+        body: JSON.stringify({
+          range: guruHeaderRange,
+          majorDimension: 'ROWS',
+          values: [['Guru Pengiring / Pembimbing / Jurulatih']]
+        })
+      }
+    );
+  } catch (err) {
+    console.warn('Amaran menulis header AA1 Guru Pengiring:', err);
+  }
 
   // Format header row cleanly
   try {
@@ -301,7 +366,7 @@ export async function ensureSheetHeaders(config: SheetConfig, accessToken: strin
                   startRowIndex: 0,
                   endRowIndex: 1,
                   startColumnIndex: 0,
-                  endColumnIndex: SHEET_HEADERS.length
+                  endColumnIndex: 27
                 },
                 cell: {
                   userEnteredFormat: {
@@ -349,7 +414,7 @@ export async function createStudentSpreadsheet(accessToken: string, schoolTitle 
               title: 'Rekod Murid',
               gridProperties: {
                 frozenRowCount: 1,
-                columnCount: 26
+                columnCount: 28
               }
             }
           }
@@ -382,7 +447,7 @@ export async function fetchRecordsFromSheet(config: SheetConfig, accessToken: st
     saveSheetConfig(verifiedConfig);
   }
 
-  const range = `${escapeSheetTitle(verifiedConfig.sheetTitle)}!A2:Z`;
+  const range = `${escapeSheetTitle(verifiedConfig.sheetTitle)}!A2:AA`;
   const data = await sheetsFetch<{ values?: string[][] }>(
     `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(verifiedConfig.spreadsheetId)}/values/${encodeURIComponent(range)}`,
     accessToken
@@ -399,7 +464,11 @@ export async function fetchRecordsFromSheet(config: SheetConfig, accessToken: st
     const id = (row[0] || '').trim() || `sheet_row_${idx + 2}`;
     const parsedDate = parseTarikhFromSheet(row[13] || '');
     const suratNama = (row[14] || '').trim();
-    const suratData = row.slice(15).join('').trim();
+    const suratData = row.slice(15, 26).join('').trim();
+    const guruRaw = (row[26] || '').trim();
+    const guruPengiring = guruRaw
+      ? guruRaw.split(/[,;\n|]+/).map(s => s.trim().toUpperCase()).filter(Boolean)
+      : [];
 
     records.push({
       id,
@@ -419,6 +488,7 @@ export async function fetchRecordsFromSheet(config: SheetConfig, accessToken: st
       tarikhTamat: parsedDate.tarikhTamat,
       suratPengiktirafanNama: suratNama,
       suratPengiktirafanData: suratData,
+      guruPengiring,
       updatedAt: row[11] || ''
     });
   });
@@ -436,20 +506,39 @@ export async function appendRecordsToSheet(
   accessToken: string
 ): Promise<void> {
   if (records.length === 0) return;
-  const range = `${escapeSheetTitle(config.sheetTitle)}!A:Z`;
-  const values = records.map(r => recordToSheetRow(r, false));
+  const range = `${escapeSheetTitle(config.sheetTitle)}!A:AA`;
+  const values = records.map(r => recordToSheetRow(r, true));
 
-  await sheetsFetch(
-    `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(config.spreadsheetId)}/values/${encodeURIComponent(range)}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`,
-    accessToken,
-    {
-      method: 'POST',
-      body: JSON.stringify({
-        majorDimension: 'ROWS',
-        values
-      })
+  try {
+    await sheetsFetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(config.spreadsheetId)}/values/${encodeURIComponent(range)}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`,
+      accessToken,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          majorDimension: 'ROWS',
+          values
+        })
+      }
+    );
+  } catch (err) {
+    if (err instanceof SheetApiError && err.status === 400) {
+      await ensureMinSheetColumns(config, 28, accessToken);
+      await sheetsFetch(
+        `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(config.spreadsheetId)}/values/${encodeURIComponent(range)}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`,
+        accessToken,
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            majorDimension: 'ROWS',
+            values
+          })
+        }
+      );
+    } else {
+      throw err;
     }
-  );
+  }
 }
 
 /**
@@ -485,19 +574,37 @@ export async function updateRecordInSheet(
     return 'appended';
   }
 
-  const range = `${escapeSheetTitle(config.sheetTitle)}!A${rowIndex}:Z${rowIndex}`;
-  await sheetsFetch(
-    `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(config.spreadsheetId)}/values/${encodeURIComponent(range)}?valueInputOption=USER_ENTERED`,
-    accessToken,
-    {
-      method: 'PUT',
-      body: JSON.stringify({
-        range,
-        majorDimension: 'ROWS',
-        values: [recordToSheetRow(record, true)]
-      })
+  const range = `${escapeSheetTitle(config.sheetTitle)}!A${rowIndex}:AA${rowIndex}`;
+  const body = JSON.stringify({
+    range,
+    majorDimension: 'ROWS',
+    values: [recordToSheetRow(record, true)]
+  });
+
+  try {
+    await sheetsFetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(config.spreadsheetId)}/values/${encodeURIComponent(range)}?valueInputOption=USER_ENTERED`,
+      accessToken,
+      {
+        method: 'PUT',
+        body
+      }
+    );
+  } catch (err) {
+    if (err instanceof SheetApiError && err.status === 400) {
+      await ensureMinSheetColumns(config, 28, accessToken);
+      await sheetsFetch(
+        `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(config.spreadsheetId)}/values/${encodeURIComponent(range)}?valueInputOption=USER_ENTERED`,
+        accessToken,
+        {
+          method: 'PUT',
+          body
+        }
+      );
+    } else {
+      throw err;
     }
-  );
+  }
   return 'updated';
 }
 
