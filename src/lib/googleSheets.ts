@@ -23,6 +23,8 @@ export interface SheetRecord {
   tarikhTamat?: string;
   suratPengiktirafanNama?: string;
   suratPengiktirafanData?: string;
+  sijilMuridNama?: string;
+  sijilMuridData?: string;
   guruPengiring?: string[];
   updatedAt?: unknown;
   creatorId?: string;
@@ -155,9 +157,12 @@ export function recordToSheetRow(r: SheetRecord, padAttachmentCols = false): str
   const nowStr = new Date().toLocaleString('ms-MY');
   const suratNama = (r.suratPengiktirafanNama || '').trim();
   const suratData = (r.suratPengiktirafanData || '').trim();
+  const sijilNama = (r.sijilMuridNama || '').trim();
+  const sijilData = (r.sijilMuridData || '').trim();
   const guruList = (r.guruPengiring || []).map(g => g.trim().toUpperCase()).filter(Boolean);
   const guruStr = guruList.join(', ');
-  const mustPad = padAttachmentCols || guruStr.length > 0;
+  const hasSijil = sijilNama.length > 0 || sijilData.length > 0;
+  const mustPad = padAttachmentCols || guruStr.length > 0 || hasSijil;
 
   const baseCols = [
     r.id,
@@ -180,6 +185,10 @@ export function recordToSheetRow(r: SheetRecord, padAttachmentCols = false): str
 
   if (mustPad) {
     baseCols.push(guruStr);
+    if (hasSijil || padAttachmentCols) {
+      baseCols.push(sijilNama);
+      baseCols.push(...splitAttachmentChunks(sijilData, true));
+    }
   }
   return baseCols;
 }
@@ -305,7 +314,7 @@ async function ensureMinSheetColumns(config: SheetConfig, minColumns: number, ac
  * Write standard header row to A1:P1 + AA1 (Guru Pengiring) and freeze row 1
  */
 export async function ensureSheetHeaders(config: SheetConfig, accessToken: string): Promise<void> {
-  await ensureMinSheetColumns(config, 28, accessToken);
+  await ensureMinSheetColumns(config, 40, accessToken);
 
   const range = `${escapeSheetTitle(config.sheetTitle)}!A1:P1`;
   await sheetsFetch(
@@ -321,23 +330,23 @@ export async function ensureSheetHeaders(config: SheetConfig, accessToken: strin
     }
   );
 
-  // Tulis header kolum AA1 untuk Guru Pengiring / Pembimbing / Jurulatih
-  const guruHeaderRange = `${escapeSheetTitle(config.sheetTitle)}!AA1`;
+  // Tulis header kolum AA1..AC1 untuk Guru Pengiring & Sijil Murid
+  const extraHeaderRange = `${escapeSheetTitle(config.sheetTitle)}!AA1:AC1`;
   try {
     await sheetsFetch(
-      `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(config.spreadsheetId)}/values/${encodeURIComponent(guruHeaderRange)}?valueInputOption=USER_ENTERED`,
+      `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(config.spreadsheetId)}/values/${encodeURIComponent(extraHeaderRange)}?valueInputOption=USER_ENTERED`,
       accessToken,
       {
         method: 'PUT',
         body: JSON.stringify({
-          range: guruHeaderRange,
+          range: extraHeaderRange,
           majorDimension: 'ROWS',
-          values: [['Guru Pengiring / Pembimbing / Jurulatih']]
+          values: [['Guru Pengiring / Pembimbing / Jurulatih', 'Sijil Pencapaian / Penyertaan (Nama Fail)', 'Sijil Pencapaian / Penyertaan (Lampiran)']]
         })
       }
     );
   } catch (err) {
-    console.warn('Amaran menulis header AA1 Guru Pengiring:', err);
+    console.warn('Amaran menulis header AA1:AC1:', err);
   }
 
   // Format header row cleanly
@@ -413,7 +422,7 @@ export async function createStudentSpreadsheet(accessToken: string, schoolTitle 
               title: 'Rekod Murid',
               gridProperties: {
                 frozenRowCount: 1,
-                columnCount: 28
+                columnCount: 40
               }
             }
           }
@@ -446,7 +455,7 @@ export async function fetchRecordsFromSheet(config: SheetConfig, accessToken: st
     saveSheetConfig(verifiedConfig);
   }
 
-  const range = `${escapeSheetTitle(verifiedConfig.sheetTitle)}!A2:AA`;
+  const range = `${escapeSheetTitle(verifiedConfig.sheetTitle)}!A2:AM`;
   const data = await sheetsFetch<{ values?: string[][] }>(
     `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(verifiedConfig.spreadsheetId)}/values/${encodeURIComponent(range)}`,
     accessToken
@@ -468,6 +477,8 @@ export async function fetchRecordsFromSheet(config: SheetConfig, accessToken: st
     const guruPengiring = guruRaw
       ? guruRaw.split(/[,;\n|]+/).map(s => s.trim().toUpperCase()).filter(Boolean)
       : [];
+    const sijilNama = (row[27] || '').trim();
+    const sijilData = row.slice(28, 39).join('').trim();
 
     records.push({
       id,
@@ -487,6 +498,8 @@ export async function fetchRecordsFromSheet(config: SheetConfig, accessToken: st
       tarikhTamat: parsedDate.tarikhTamat,
       suratPengiktirafanNama: suratNama,
       suratPengiktirafanData: suratData,
+      sijilMuridNama: sijilNama,
+      sijilMuridData: sijilData,
       guruPengiring,
       updatedAt: row[11] || ''
     });
@@ -505,7 +518,7 @@ export async function appendRecordsToSheet(
   accessToken: string
 ): Promise<void> {
   if (records.length === 0) return;
-  const range = `${escapeSheetTitle(config.sheetTitle)}!A:AA`;
+  const range = `${escapeSheetTitle(config.sheetTitle)}!A:AM`;
   const values = records.map(r => recordToSheetRow(r, true));
 
   try {
@@ -522,7 +535,7 @@ export async function appendRecordsToSheet(
     );
   } catch (err) {
     if (err instanceof SheetApiError && err.status === 400) {
-      await ensureMinSheetColumns(config, 28, accessToken);
+      await ensureMinSheetColumns(config, 40, accessToken);
       await sheetsFetch(
         `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(config.spreadsheetId)}/values/${encodeURIComponent(range)}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`,
         accessToken,
@@ -573,7 +586,7 @@ export async function updateRecordInSheet(
     return 'appended';
   }
 
-  const range = `${escapeSheetTitle(config.sheetTitle)}!A${rowIndex}:AA${rowIndex}`;
+  const range = `${escapeSheetTitle(config.sheetTitle)}!A${rowIndex}:AM${rowIndex}`;
   const body = JSON.stringify({
     range,
     majorDimension: 'ROWS',
@@ -591,7 +604,7 @@ export async function updateRecordInSheet(
     );
   } catch (err) {
     if (err instanceof SheetApiError && err.status === 400) {
-      await ensureMinSheetColumns(config, 28, accessToken);
+      await ensureMinSheetColumns(config, 40, accessToken);
       await sheetsFetch(
         `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(config.spreadsheetId)}/values/${encodeURIComponent(range)}?valueInputOption=USER_ENTERED`,
         accessToken,
@@ -705,7 +718,9 @@ export const PARENT_REVIEW_HEADERS = [
   'Tahun Kalendar',
   'Nama Penjaga & Tel',
   'Surat Pengiktirafan (Nama Fail)',
-  'Surat Pengiktirafan (Pautan / Data)'
+  'Surat Pengiktirafan (Pautan / Data)',
+  'Sijil Pencapaian / Penyertaan (Nama Fail)',
+  'Sijil Pencapaian / Penyertaan (Pautan / Data)'
 ];
 
 export interface ParentSubmission {
@@ -729,6 +744,8 @@ export interface ParentSubmission {
   penjagaInfo: string;
   suratPengiktirafanNama: string;
   suratPengiktirafanData: string;
+  sijilMuridNama: string;
+  sijilMuridData: string;
 }
 
 export function loadSavedParentScriptUrl(): string {
@@ -791,7 +808,7 @@ export async function ensureParentReviewTab(config: SheetConfig, accessToken: st
     reviewSheetId = addRes.replies?.[0]?.addSheet?.properties?.sheetId ?? 0;
   }
 
-  const range = `${escapeSheetTitle(PARENT_REVIEW_TAB_NAME)}!A1:Q1`;
+  const range = `${escapeSheetTitle(PARENT_REVIEW_TAB_NAME)}!A1:S1`;
   await sheetsFetch(
     `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(config.spreadsheetId)}/values/${encodeURIComponent(range)}?valueInputOption=USER_ENTERED`,
     accessToken,
@@ -854,7 +871,7 @@ export async function fetchParentSubmissionsFromSheet(
     return { exists: false, submissions: [] };
   }
 
-  const range = `${escapeSheetTitle(PARENT_REVIEW_TAB_NAME)}!A2:Q`;
+  const range = `${escapeSheetTitle(PARENT_REVIEW_TAB_NAME)}!A2:S`;
   const data = await sheetsFetch<{ values?: string[][] }>(
     `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(config.spreadsheetId)}/values/${encodeURIComponent(range)}`,
     accessToken
@@ -889,7 +906,9 @@ export async function fetchParentSubmissionsFromSheet(
       tahunKalendar: (row[13] || '').trim() || new Date().getFullYear().toString(),
       penjagaInfo: (row[14] || '').trim(),
       suratPengiktirafanNama: (row[15] || '').trim(),
-      suratPengiktirafanData: (row[16] || '').trim()
+      suratPengiktirafanData: (row[16] || '').trim(),
+      sijilMuridNama: (row[17] || '').trim(),
+      sijilMuridData: (row[18] || '').trim()
     });
   });
 
@@ -970,8 +989,11 @@ export async function submitParentEntryToAppsScript(
     fileName?: string;
     fileMimeType?: string;
     fileBase64?: string;
+    sijilFileName?: string;
+    sijilFileMimeType?: string;
+    sijilFileBase64?: string;
   }
-): Promise<{ id: string; fileUrl?: string }> {
+): Promise<{ id: string; fileUrl?: string; sijilUrl?: string }> {
   const res = await fetch(appsScriptUrl.trim(), {
     method: 'POST',
     headers: {
@@ -984,14 +1006,15 @@ export async function submitParentEntryToAppsScript(
     throw new Error(`Pelayan Google Apps Script memulangkan ralat (${res.status}).`);
   }
 
-  const json = await res.json() as { ok?: boolean; error?: string; id?: string; fileUrl?: string };
+  const json = await res.json() as { ok?: boolean; error?: string; id?: string; fileUrl?: string; sijilUrl?: string };
   if (!json.ok) {
     throw new Error(json.error || 'Gagal menyimpan kiriman ibu bapa ke Google Sheets.');
   }
 
   return {
     id: json.id || `sub_${Date.now()}`,
-    fileUrl: json.fileUrl
+    fileUrl: json.fileUrl,
+    sijilUrl: json.sijilUrl
   };
 }
 
@@ -1002,11 +1025,25 @@ export function generateParentAppsScriptCode(spreadsheetId?: string): string {
 
   return `// =========================================================================
 // SKRIP PORTAL IBU BAPA - REKOD PENCAPAIAN PAJSK SKAUK
-// Simpan kiriman ibu bapa ke Tab "Semakan Ibu Bapa" & fail surat ke Google Drive
+// Simpan kiriman ibu bapa ke Tab "Semakan Ibu Bapa" & fail surat/sijil ke Google Drive
 // =========================================================================
 ${targetIdLine}
 var TAB_SEMAKAN = 'Semakan Ibu Bapa';
 var NAMA_FOLDER_DRIVE = 'SURAT PENGIKTIRAFAN KPM - PAJSK SKAUK';
+
+function simpanFailKeDrive_(folder, namaMurid, awalan, fileName, fileMimeType, fileBase64) {
+  if (!fileBase64 || !fileMimeType) return '';
+  var bytes = Utilities.base64Decode(fileBase64);
+  var safeName = (namaMurid || 'MURID') + '_' + awalan + '_' + (fileName || awalan.toLowerCase());
+  var blob = Utilities.newBlob(bytes, fileMimeType, safeName);
+  var file = folder.createFile(blob);
+  try {
+    file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+  } catch (shareErr) {
+    // Abaikan jika dasar domain mengehadkan perkongsian umum
+  }
+  return file.getUrl();
+}
 
 function doPost(e) {
   try {
@@ -1022,28 +1059,27 @@ function doPost(e) {
         'No. KP / MyKid', 'Aliran', 'Kelas', 'Bahagian',
         'Pertandingan / Aktiviti', 'Tarikh Aktiviti', 'Status Pertandingan',
         'Peringkat', 'Pencapaian', 'Tahun Kalendar', 'Nama Penjaga & Tel',
-        'Surat Pengiktirafan (Nama Fail)', 'Surat Pengiktirafan (Pautan / Data)'
+        'Surat Pengiktirafan (Nama Fail)', 'Surat Pengiktirafan (Pautan / Data)',
+        'Sijil Pencapaian / Penyertaan (Nama Fail)', 'Sijil Pencapaian / Penyertaan (Pautan / Data)'
       ]);
       sheet.setFrozenRows(1);
+    } else if (sheet.getLastColumn() < 19) {
+      sheet.getRange(1, 18, 1, 2).setValues([[
+        'Sijil Pencapaian / Penyertaan (Nama Fail)',
+        'Sijil Pencapaian / Penyertaan (Pautan / Data)'
+      ]]);
     }
 
     var fileUrl = '';
+    var sijilUrl = '';
     var fileName = (data.fileName || '').toString().trim();
+    var sijilFileName = (data.sijilFileName || '').toString().trim();
 
-    // Simpan lampiran surat pengiktirafan terus ke Google Drive jika ada
-    if (data.fileBase64 && data.fileMimeType) {
+    if ((data.fileBase64 && data.fileMimeType) || (data.sijilFileBase64 && data.sijilFileMimeType)) {
       var folders = DriveApp.getFoldersByName(NAMA_FOLDER_DRIVE);
       var folder = folders.hasNext() ? folders.next() : DriveApp.createFolder(NAMA_FOLDER_DRIVE);
-      var bytes = Utilities.base64Decode(data.fileBase64);
-      var safeName = (data.nama || 'MURID') + '_' + (fileName || 'surat_kpm');
-      var blob = Utilities.newBlob(bytes, data.fileMimeType, safeName);
-      var file = folder.createFile(blob);
-      try {
-        file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
-      } catch (shareErr) {
-        // Abaikan jika dasar domain mengehadkan perkongsian umum
-      }
-      fileUrl = file.getUrl();
+      fileUrl = simpanFailKeDrive_(folder, data.nama, 'SURAT', fileName, data.fileMimeType, data.fileBase64);
+      sijilUrl = simpanFailKeDrive_(folder, data.nama, 'SIJIL', sijilFileName, data.sijilFileMimeType, data.sijilFileBase64);
     }
 
     var idKiriman = 'sub_' + Utilities.getUuid().slice(0, 8);
@@ -1072,11 +1108,13 @@ function doPost(e) {
       data.tahunKalendar || new Date().getFullYear().toString(),
       data.penjagaInfo || '',
       fileName,
-      fileUrl
+      fileUrl,
+      sijilFileName,
+      sijilUrl
     ]);
 
     return ContentService
-      .createTextOutput(JSON.stringify({ ok: true, id: idKiriman, fileUrl: fileUrl }))
+      .createTextOutput(JSON.stringify({ ok: true, id: idKiriman, fileUrl: fileUrl, sijilUrl: sijilUrl }))
       .setMimeType(ContentService.MimeType.JSON);
   } catch (err) {
     return ContentService

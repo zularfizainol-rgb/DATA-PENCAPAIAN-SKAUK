@@ -83,6 +83,16 @@
           "description": "Kandungan lampiran surat pengiktirafan KPM (Data URL termampat)",
           "maxLength": 700000
         },
+        "sijilMuridNama": {
+          "type": "string",
+          "description": "Nama fail sijil pencapaian atau sijil penyertaan murid",
+          "maxLength": 255
+        },
+        "sijilMuridData": {
+          "type": "string",
+          "description": "Pautan Google Drive atau data lampiran sijil pencapaian / penyertaan murid",
+          "maxLength": 700000
+        },
         "guruPengiring": {
           "type": "array",
           "items": {

@@ -71,7 +71,7 @@ export default function ParentPortalView({
   onExitPreview
 }: ParentPortalViewProps) {
   const [submitting, setSubmitting] = useState(false);
-  const [fileBusy, setFileBusy] = useState(false);
+  const [fileBusyTarget, setFileBusyTarget] = useState<'surat' | 'sijil' | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [submittedSummary, setSubmittedSummary] = useState<{
     id: string;
@@ -80,6 +80,7 @@ export default function ParentPortalView({
     pencapaian: string;
     peringkat: string;
     fileUrl?: string;
+    sijilUrl?: string;
   } | null>(null);
 
   const [form, setForm] = useState({
@@ -99,24 +100,35 @@ export default function ParentPortalView({
     pencapaian: 'Penyertaan'
   });
 
-  const [attachment, setAttachment] = useState<{
+  const [suratAttachment, setSuratAttachment] = useState<{
     fileName: string;
     fileMimeType: string;
     fileBase64: string;
     previewDataUrl: string;
   } | null>(null);
 
-  const handleFileChange = async (file?: File) => {
+  const [sijilAttachment, setSijilAttachment] = useState<{
+    fileName: string;
+    fileMimeType: string;
+    fileBase64: string;
+    previewDataUrl: string;
+  } | null>(null);
+
+  const handleFileChange = async (target: 'surat' | 'sijil', file?: File) => {
     if (!file) return;
     setErrorMsg(null);
-    setFileBusy(true);
+    setFileBusyTarget(target);
     try {
       const parsed = await readFileForDrive(file);
-      setAttachment(parsed);
+      if (target === 'surat') {
+        setSuratAttachment(parsed);
+      } else {
+        setSijilAttachment(parsed);
+      }
     } catch (err) {
       setErrorMsg(err instanceof Error ? err.message : 'Gagal membaca fail lampiran.');
     } finally {
-      setFileBusy(false);
+      setFileBusyTarget(null);
     }
   };
 
@@ -137,7 +149,8 @@ export default function ParentPortalView({
       peringkat: 'Daerah',
       pencapaian: 'Penyertaan'
     });
-    setAttachment(null);
+    setSuratAttachment(null);
+    setSijilAttachment(null);
     setErrorMsg(null);
     setSubmittedSummary(null);
   };
@@ -168,12 +181,12 @@ export default function ParentPortalView({
       setErrorMsg('Tarikh Tamat tidak boleh lebih awal daripada Tarikh Mula.');
       return;
     }
-    if (!attachment) {
-      setErrorMsg(
-        isRecognized
-          ? 'Sila muat naik lampiran Surat Pengiktirafan KPM atau Sijil Murid sebelum menghantar.'
-          : 'Sila muat naik lampiran Sijil Pencapaian / Penyertaan Murid sebelum menghantar.'
-      );
+    if (isRecognized && !suratAttachment) {
+      setErrorMsg('Sila muat naik 1. Surat Pengiktirafan Daripada KPM bagi status LUAR KPM (PENGIKTIRAFAN).');
+      return;
+    }
+    if (!sijilAttachment) {
+      setErrorMsg('Sila muat naik 2. Sijil Pencapaian / Sijil Penyertaan Murid sebelum menghantar.');
       return;
     }
 
@@ -198,9 +211,12 @@ export default function ParentPortalView({
         pencapaian: form.pencapaian,
         tahunKalendar: selectedYear,
         penjagaInfo: penjagaCombined,
-        fileName: attachment.fileName,
-        fileMimeType: attachment.fileMimeType,
-        fileBase64: attachment.fileBase64
+        fileName: suratAttachment?.fileName || '',
+        fileMimeType: suratAttachment?.fileMimeType || '',
+        fileBase64: suratAttachment?.fileBase64 || '',
+        sijilFileName: sijilAttachment.fileName,
+        sijilFileMimeType: sijilAttachment.fileMimeType,
+        sijilFileBase64: sijilAttachment.fileBase64
       });
 
       setSubmittedSummary({
@@ -209,7 +225,8 @@ export default function ParentPortalView({
         pertandingan: form.pertandingan.trim().toUpperCase(),
         pencapaian: form.pencapaian,
         peringkat: form.peringkat,
-        fileUrl: result.fileUrl
+        fileUrl: result.fileUrl,
+        sijilUrl: result.sijilUrl
       });
     } catch (err) {
       console.error('Parent submission error:', err);
@@ -308,7 +325,13 @@ export default function ParentPortalView({
               </div>
               {submittedSummary.fileUrl && (
                 <div className="pt-2 border-t border-slate-200 flex items-center justify-between gap-2">
-                  <span className="text-emerald-700 font-black uppercase text-[10px]">Lampiran Surat / Sijil:</span>
+                  <span className="text-indigo-700 font-black uppercase text-[10px]">1. Surat Pengiktirafan:</span>
+                  <span className="text-emerald-700 font-bold">✓ Disimpan ke Google Drive</span>
+                </div>
+              )}
+              {submittedSummary.sijilUrl && (
+                <div className="pt-2 border-t border-slate-200 flex items-center justify-between gap-2">
+                  <span className="text-emerald-700 font-black uppercase text-[10px]">2. Sijil Murid:</span>
                   <span className="text-emerald-700 font-bold">✓ Disimpan ke Google Drive</span>
                 </div>
               )}
@@ -543,7 +566,7 @@ export default function ParentPortalView({
                     </select>
                   </div>
 
-                  {/* Lampiran Wajib Surat Pengiktirafan KPM atau Sijil Murid */}
+                  {/* Lampiran 1 (Asing): Surat Pengiktirafan Daripada KPM */}
                   <div className="md:col-span-2 bg-indigo-50/80 border-2 border-indigo-200 rounded-2xl p-4 sm:p-5 space-y-3 animate-in fade-in duration-200">
                     <div className="flex items-start gap-2.5">
                       <div className="p-2 bg-indigo-600 text-white rounded-xl shrink-0">
@@ -552,82 +575,75 @@ export default function ParentPortalView({
                       <div>
                         <h4 className="text-xs font-black text-indigo-950 uppercase tracking-wider">
                           {isRecognized
-                            ? 'Lampiran Surat Pengiktirafan KPM / Sijil Murid *'
-                            : 'Lampiran Sijil Pencapaian / Penyertaan Murid *'}
+                            ? '1. Lampiran Surat Pengiktirafan Daripada KPM *'
+                            : '1. Lampiran Surat Pengiktirafan (Jika Ada / Pilihan)'}
                         </h4>
                         <p className="text-[11px] font-medium text-indigo-700 mt-0.5">
                           {isRecognized
-                            ? 'Wajib muat naik salinan surat pengiktirafan daripada KPM atau sijil murid (Gambar JPG/PNG atau PDF sehingga 4MB). Fail akan disimpan terus ke Google Drive sekolah.'
-                            : 'Wajib muat naik salinan sijil pencapaian atau penyertaan murid bagi kategori Luar KPM (Gambar JPG/PNG atau PDF sehingga 4MB). Fail akan disimpan terus ke Google Drive sekolah.'}
+                            ? 'Wajib muat naik salinan surat pengiktirafan daripada KPM (Gambar JPG/PNG atau PDF sehingga 4MB). Fail disimpan terus ke Google Drive sekolah.'
+                            : 'Jika pertandingan ini mempunyai surat pengiktirafan atau surat kelulusan penganjur, anda boleh muat naik di sini (JPG/PNG atau PDF sehingga 4MB).'}
                         </p>
                       </div>
                     </div>
 
                     <div className="flex flex-col sm:flex-row sm:items-center gap-2.5 flex-wrap">
                       <label className={`inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer shadow-xs ${
-                        fileBusy
+                        fileBusyTarget === 'surat'
                           ? 'bg-indigo-300 text-white pointer-events-none'
                           : 'bg-indigo-600 hover:bg-indigo-700 text-white'
                       }`}>
-                        {fileBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
-                        <span>
-                          {attachment
-                            ? (isRecognized ? 'Tukar Surat / Sijil' : 'Tukar Sijil Murid')
-                            : (isRecognized ? 'Muat Naik Surat / Sijil' : 'Muat Naik Sijil Murid')}
-                        </span>
+                        {fileBusyTarget === 'surat' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
+                        <span>{suratAttachment ? 'Tukar Surat Pengiktirafan' : 'Muat Naik Surat Pengiktirafan'}</span>
                         <input
                           type="file"
                           accept="image/*,.pdf,application/pdf"
                           className="hidden"
                           onChange={(e) => {
                             const file = e.target.files?.[0];
-                            handleFileChange(file);
+                            handleFileChange('surat', file);
                             e.currentTarget.value = '';
                           }}
                         />
                       </label>
 
-                      {/* Contoh Surat KPM untuk rujukan apabila LUAR KPM (PENGIKTIRAFAN) dipilih */}
-                      {isRecognized && (
-                        <button
-                          type="button"
-                          onClick={() => onPreviewSurat({
-                            nama: 'Contoh Surat Pengiktirafan KPM (BSKK).jpg',
-                            data: contohSuratUrl,
-                            pertandingan: 'Rujukan Format Surat Pengiktirafan KPM'
-                          })}
-                          className="inline-flex items-center gap-2.5 px-3 py-1.5 rounded-xl bg-white hover:bg-amber-50 border border-indigo-200 hover:border-amber-400 text-left transition-all cursor-pointer shadow-xs group"
-                          title="Klik untuk besarkan contoh surat pengiktirafan KPM"
-                        >
-                          <img
-                            src={contohSuratUrl}
-                            alt="Contoh Surat Pengiktirafan KPM"
-                            className="w-8 h-10 object-cover rounded-md border border-slate-200 shrink-0 group-hover:scale-105 transition-transform"
-                          />
-                          <div className="leading-tight">
-                            <span className="block text-[10px] font-black text-indigo-950 uppercase tracking-wider">
-                              Contoh Surat KPM
-                            </span>
-                            <span className="inline-flex items-center gap-1 text-[10px] font-bold text-indigo-600 group-hover:text-amber-700 mt-0.5">
-                              <Eye className="w-3 h-3" />
-                              <span>Klik untuk lihat rujukan</span>
-                            </span>
-                          </div>
-                        </button>
-                      )}
+                      <button
+                        type="button"
+                        onClick={() => onPreviewSurat({
+                          nama: 'Contoh Surat Pengiktirafan KPM (BSKK).jpg',
+                          data: contohSuratUrl,
+                          pertandingan: 'Rujukan Format Surat Pengiktirafan KPM'
+                        })}
+                        className="inline-flex items-center gap-2.5 px-3 py-1.5 rounded-xl bg-white hover:bg-amber-50 border border-indigo-200 hover:border-amber-400 text-left transition-all cursor-pointer shadow-xs group"
+                        title="Klik untuk besarkan contoh surat pengiktirafan KPM"
+                      >
+                        <img
+                          src={contohSuratUrl}
+                          alt="Contoh Surat Pengiktirafan KPM"
+                          className="w-8 h-10 object-cover rounded-md border border-slate-200 shrink-0 group-hover:scale-105 transition-transform"
+                        />
+                        <div className="leading-tight">
+                          <span className="block text-[10px] font-black text-indigo-950 uppercase tracking-wider">
+                            Contoh Surat KPM
+                          </span>
+                          <span className="inline-flex items-center gap-1 text-[10px] font-bold text-indigo-600 group-hover:text-amber-700 mt-0.5">
+                            <Eye className="w-3 h-3" />
+                            <span>Klik untuk lihat rujukan</span>
+                          </span>
+                        </div>
+                      </button>
 
-                      {attachment && (
+                      {suratAttachment && (
                         <div className="flex flex-wrap items-center gap-2 flex-1 min-w-[220px] bg-white border border-indigo-200 px-3 py-2 rounded-xl">
                           <FileCheck2 className="w-4 h-4 text-emerald-600 shrink-0" />
-                          <span className="text-xs font-bold text-slate-700 truncate max-w-[180px]" title={attachment.fileName}>
-                            {attachment.fileName}
+                          <span className="text-xs font-bold text-slate-700 truncate max-w-[180px]" title={suratAttachment.fileName}>
+                            {suratAttachment.fileName}
                           </span>
                           <div className="flex items-center gap-1.5 ml-auto">
                             <button
                               type="button"
                               onClick={() => onPreviewSurat({
-                                nama: attachment.fileName,
-                                data: attachment.previewDataUrl,
+                                nama: suratAttachment.fileName,
+                                data: suratAttachment.previewDataUrl,
                                 pertandingan: form.pertandingan,
                                 murid: form.nama
                               })}
@@ -638,7 +654,76 @@ export default function ParentPortalView({
                             </button>
                             <button
                               type="button"
-                              onClick={() => setAttachment(null)}
+                              onClick={() => setSuratAttachment(null)}
+                              className="px-2.5 py-1 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 text-[10px] font-black uppercase tracking-wider cursor-pointer"
+                            >
+                              Buang
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Lampiran 2 (Asing): Sijil Pencapaian / Sijil Penyertaan Murid */}
+                  <div className="md:col-span-2 bg-emerald-50/80 border-2 border-emerald-200 rounded-2xl p-4 sm:p-5 space-y-3 animate-in fade-in duration-200">
+                    <div className="flex items-start gap-2.5">
+                      <div className="p-2 bg-emerald-600 text-white rounded-xl shrink-0">
+                        <FileCheck2 className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <h4 className="text-xs font-black text-emerald-950 uppercase tracking-wider">
+                          2. Lampiran Sijil Pencapaian / Sijil Penyertaan Murid *
+                        </h4>
+                        <p className="text-[11px] font-medium text-emerald-800 mt-0.5">
+                          Wajib muat naik salinan sijil pencapaian atau sijil penyertaan murid (Gambar JPG/PNG atau PDF sehingga 4MB). Fail disimpan terus ke Google Drive sekolah.
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex flex-col sm:flex-row sm:items-center gap-2.5 flex-wrap">
+                      <label className={`inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer shadow-xs ${
+                        fileBusyTarget === 'sijil'
+                          ? 'bg-emerald-300 text-white pointer-events-none'
+                          : 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                      }`}>
+                        {fileBusyTarget === 'sijil' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
+                        <span>{sijilAttachment ? 'Tukar Sijil Murid' : 'Muat Naik Sijil Murid'}</span>
+                        <input
+                          type="file"
+                          accept="image/*,.pdf,application/pdf"
+                          className="hidden"
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            handleFileChange('sijil', file);
+                            e.currentTarget.value = '';
+                          }}
+                        />
+                      </label>
+
+                      {sijilAttachment && (
+                        <div className="flex flex-wrap items-center gap-2 flex-1 min-w-[220px] bg-white border border-emerald-200 px-3 py-2 rounded-xl">
+                          <FileCheck2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                          <span className="text-xs font-bold text-slate-700 truncate max-w-[180px]" title={sijilAttachment.fileName}>
+                            {sijilAttachment.fileName}
+                          </span>
+                          <div className="flex items-center gap-1.5 ml-auto">
+                            <button
+                              type="button"
+                              onClick={() => onPreviewSurat({
+                                nama: sijilAttachment.fileName,
+                                data: sijilAttachment.previewDataUrl,
+                                pertandingan: form.pertandingan,
+                                murid: form.nama
+                              })}
+                              className="px-2.5 py-1 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-700 text-[10px] font-black uppercase tracking-wider inline-flex items-center gap-1 cursor-pointer"
+                            >
+                              <Eye className="w-3 h-3" />
+                              <span>Lihat</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setSijilAttachment(null)}
                               className="px-2.5 py-1 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 text-[10px] font-black uppercase tracking-wider cursor-pointer"
                             >
                               Buang

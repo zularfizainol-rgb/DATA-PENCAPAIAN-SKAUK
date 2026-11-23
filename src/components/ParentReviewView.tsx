@@ -421,12 +421,12 @@ export default function ParentReviewView({
 
                       {/* Footer Bar: Attachment + Action Buttons */}
                       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-1">
-                        <div>
+                        <div className="flex flex-wrap items-center gap-2">
                           {sub.suratPengiktirafanData ? (
                             <button
                               type="button"
                               onClick={() => onPreviewSurat({
-                                nama: sub.suratPengiktirafanNama || (isRecognized ? 'Surat Pengiktirafan KPM' : 'Sijil Murid'),
+                                nama: sub.suratPengiktirafanNama || 'Surat Pengiktirafan KPM',
                                 data: sub.suratPengiktirafanData,
                                 pertandingan: sub.pertandingan,
                                 murid: sub.nama
@@ -434,17 +434,31 @@ export default function ParentReviewView({
                               className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-800 text-xs font-black uppercase tracking-wider transition-all cursor-pointer"
                             >
                               <Paperclip className="w-3.5 h-3.5" />
-                              <span>{isRecognized ? 'Lihat Surat / Sijil' : 'Lihat Sijil Murid'}</span>
+                              <span>Lihat Surat Pengiktirafan</span>
                             </button>
-                          ) : (isRecognized || normalizeStatus(sub.statusPertandingan) === 'LUAR KPM') ? (
+                          ) : isRecognized ? (
                             <span className="text-[11px] font-bold text-amber-700 bg-amber-50 px-3 py-1.5 rounded-lg border border-amber-200 inline-block">
-                              {isRecognized
-                                ? 'Tiada lampiran surat KPM / sijil dimuat naik ibu bapa'
-                                : 'Tiada lampiran sijil murid dimuat naik ibu bapa'}
+                              Tiada Surat Pengiktirafan dimuat naik
                             </span>
+                          ) : null}
+
+                          {sub.sijilMuridData ? (
+                            <button
+                              type="button"
+                              onClick={() => onPreviewSurat({
+                                nama: sub.sijilMuridNama || 'Sijil Pencapaian / Penyertaan Murid',
+                                data: sub.sijilMuridData,
+                                pertandingan: sub.pertandingan,
+                                murid: sub.nama
+                              })}
+                              className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-emerald-800 text-xs font-black uppercase tracking-wider transition-all cursor-pointer"
+                            >
+                              <Paperclip className="w-3.5 h-3.5" />
+                              <span>Lihat Sijil Murid</span>
+                            </button>
                           ) : (
-                            <span className="text-[11px] font-semibold text-slate-400">
-                              Tiada lampiran diperlukan ({normalizeStatus(sub.statusPertandingan)})
+                            <span className="text-[11px] font-bold text-amber-700 bg-amber-50 px-3 py-1.5 rounded-lg border border-amber-200 inline-block">
+                              Tiada Sijil Murid dimuat naik
                             </span>
                           )}
                         </div>

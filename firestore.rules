@@ -16,6 +16,7 @@ service cloud.firestore {
           'updatedAt', 'creatorId',
           'jenisTarikh', 'tarikhMula', 'tarikhTamat',
           'suratPengiktirafanNama', 'suratPengiktirafanData',
+          'sijilMuridNama', 'sijilMuridData',
           'guruPengiring'
         ])
         && data.nama is string && data.nama.size() > 0 && data.nama.size() <= 200
@@ -35,6 +36,8 @@ service cloud.firestore {
         && (!('tarikhTamat' in data) || (data.tarikhTamat is string && data.tarikhTamat.size() <= 20))
         && (!('suratPengiktirafanNama' in data) || (data.suratPengiktirafanNama is string && data.suratPengiktirafanNama.size() <= 255))
         && (!('suratPengiktirafanData' in data) || (data.suratPengiktirafanData is string && data.suratPengiktirafanData.size() <= 700000))
+        && (!('sijilMuridNama' in data) || (data.sijilMuridNama is string && data.sijilMuridNama.size() <= 255))
+        && (!('sijilMuridData' in data) || (data.sijilMuridData is string && data.sijilMuridData.size() <= 700000))
         && (!('guruPengiring' in data) || (data.guruPengiring is list && data.guruPengiring.size() <= 20));
     }
 
@@ -55,6 +58,7 @@ service cloud.firestore {
           'updatedAt',
           'jenisTarikh', 'tarikhMula', 'tarikhTamat',
           'suratPengiktirafanNama', 'suratPengiktirafanData',
+          'sijilMuridNama', 'sijilMuridData',
           'guruPengiring'
         ])
         && incoming().creatorId == existing().creatorId
