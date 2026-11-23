@@ -709,7 +709,6 @@ export default function App() {
     setSaving(true);
     try {
       const id = editingId || generateValidId();
-      const isRecognized = normalizeStatus(formData.statusPertandingan) === 'LUAR KPM (PENGIKTIRAFAN)';
 
       const payload = {
         nama: formData.nama.trim().toUpperCase(),
@@ -722,8 +721,8 @@ export default function App() {
         tarikhMula: (formData.tarikhMula || '').trim(),
         tarikhTamat: formData.jenisTarikh === 'tempoh' ? (formData.tarikhTamat || '').trim() : '',
         statusPertandingan: formData.statusPertandingan,
-        suratPengiktirafanNama: isRecognized ? (formData.suratPengiktirafanNama || '').trim() : '',
-        suratPengiktirafanData: isRecognized ? (formData.suratPengiktirafanData || '').trim() : '',
+        suratPengiktirafanNama: (formData.suratPengiktirafanNama || '').trim(),
+        suratPengiktirafanData: (formData.suratPengiktirafanData || '').trim(),
         peringkat: formData.peringkat,
         pencapaian: formData.pencapaian,
         guruPengiring: (formData.guruPengiring || []).map(g => g.trim().toUpperCase()).filter(Boolean),
@@ -970,7 +969,6 @@ export default function App() {
       const addedRecords: RecordData[] = [];
       let firebaseSuccessCount = 0;
       let firebaseQuotaHit = false;
-      const isRecognized = normalizeStatus(bulkHeader.statusPertandingan) === 'LUAR KPM (PENGIKTIRAFAN)';
 
       const guruListBulk = (bulkHeader.guruPengiring || []).map(g => g.trim().toUpperCase()).filter(Boolean);
 
@@ -989,8 +987,8 @@ export default function App() {
           tarikhMula: (bulkHeader.tarikhMula || '').trim(),
           tarikhTamat: bulkHeader.jenisTarikh === 'tempoh' ? (bulkHeader.tarikhTamat || '').trim() : '',
           statusPertandingan: bulkHeader.statusPertandingan,
-          suratPengiktirafanNama: isRecognized ? (bulkHeader.suratPengiktirafanNama || '').trim() : '',
-          suratPengiktirafanData: isRecognized ? (bulkHeader.suratPengiktirafanData || '').trim() : '',
+          suratPengiktirafanNama: (bulkHeader.suratPengiktirafanNama || '').trim(),
+          suratPengiktirafanData: (bulkHeader.suratPengiktirafanData || '').trim(),
           peringkat: bulkHeader.peringkat,
           pencapaian: student.pencapaian || bulkHeader.defaultPencapaian,
           guruPengiring: guruListBulk,
@@ -1365,7 +1363,7 @@ export default function App() {
       "AKTIVITI / PERTANDINGAN": r.pertandingan,
       "TARIKH AKTIVITI": formatTarikhPaparan(r.jenisTarikh, r.tarikhMula, r.tarikhTamat) || '-',
       "STATUS PERTANDINGAN": normalizeStatus(r.statusPertandingan),
-      "SURAT PENGIKTIRAFAN": r.suratPengiktirafanNama || (normalizeStatus(r.statusPertandingan) === 'LUAR KPM (PENGIKTIRAFAN)' ? 'Tiada Lampiran' : '-'),
+      "SURAT PENGIKTIRAFAN / SIJIL": r.suratPengiktirafanNama || (r.suratPengiktirafanData ? 'Ada Lampiran' : (normalizeStatus(r.statusPertandingan) === 'LUAR KPM (PENGIKTIRAFAN)' ? 'Tiada Lampiran' : '-')),
       "PERINGKAT": r.peringkat,
       "PENCAPAIAN": r.pencapaian,
       "GURU PENGIRING / JURULATIH": (r.guruPengiring && r.guruPengiring.length > 0) ? r.guruPengiring.join(', ') : '-',
@@ -1520,7 +1518,6 @@ export default function App() {
         setParentSubmissionsBusy(true);
         try {
           const id = generateValidId();
-          const isRecognized = normalizeStatus(sub.statusPertandingan) === 'LUAR KPM (PENGIKTIRAFAN)';
           const payload = {
             nama: sub.nama.trim().toUpperCase(),
             noKp: (sub.noKp || '').trim(),
@@ -1531,9 +1528,9 @@ export default function App() {
             jenisTarikh: sub.jenisTarikh || 'satu_hari',
             tarikhMula: (sub.tarikhMula || '').trim(),
             tarikhTamat: sub.jenisTarikh === 'tempoh' ? (sub.tarikhTamat || '').trim() : '',
-            statusPertandingan: sub.statusPertandingan || 'KPM',
-            suratPengiktirafanNama: isRecognized ? (sub.suratPengiktirafanNama || '').trim() : '',
-            suratPengiktirafanData: isRecognized ? (sub.suratPengiktirafanData || '').trim() : '',
+            statusPertandingan: sub.statusPertandingan || 'LUAR KPM (PENGIKTIRAFAN)',
+            suratPengiktirafanNama: (sub.suratPengiktirafanNama || '').trim(),
+            suratPengiktirafanData: (sub.suratPengiktirafanData || '').trim(),
             peringkat: sub.peringkat || 'Daerah',
             pencapaian: sub.pencapaian || 'Penyertaan',
             tahunKalendar: sub.tahunKalendar || selectedYear,
@@ -1677,7 +1674,7 @@ export default function App() {
             </div>
             <div className="min-w-0">
               <h3 className="text-sm sm:text-base font-black text-slate-900 uppercase tracking-tight truncate">
-                Surat Pengiktirafan KPM
+                Lampiran Surat KPM / Sijil
               </h3>
               <p className="text-[11px] font-bold text-indigo-700 truncate">
                 {previewSuratModal.nama}
@@ -2311,15 +2308,15 @@ export default function App() {
                                         <button
                                           type="button"
                                           onClick={() => setPreviewSuratModal({
-                                            nama: compInfo.suratPengiktirafanNama || 'Surat Pengiktirafan KPM',
+                                            nama: compInfo.suratPengiktirafanNama || (compStatus === 'LUAR KPM (PENGIKTIRAFAN)' ? 'Surat Pengiktirafan KPM' : 'Sijil Murid'),
                                             data: compInfo.suratPengiktirafanData || '',
                                             pertandingan: selectedPertandinganInModal
                                           })}
                                           className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-black shadow-sm transition-all cursor-pointer"
-                                          title="Lihat Surat Pengiktirafan KPM"
+                                          title={compStatus === 'LUAR KPM (PENGIKTIRAFAN)' ? 'Lihat Surat Pengiktirafan KPM / Sijil' : 'Lihat Sijil Murid'}
                                         >
                                           <Eye className="w-4 h-4" />
-                                          <span>Surat KPM</span>
+                                          <span>{compStatus === 'LUAR KPM (PENGIKTIRAFAN)' ? 'Surat / Sijil' : 'Sijil'}</span>
                                         </button>
                                       )}
 
@@ -2594,7 +2591,7 @@ export default function App() {
                                         {firstItem.suratPengiktirafanData && (
                                           <span className="bg-indigo-50 border border-indigo-200 text-indigo-700 px-2 py-0.5 rounded font-black inline-flex items-center gap-1">
                                             <Paperclip className="w-3 h-3" />
-                                            Surat KPM
+                                            {normalizeStatus(firstItem.statusPertandingan) === 'LUAR KPM (PENGIKTIRAFAN)' ? 'Surat / Sijil' : 'Sijil'}
                                           </span>
                                         )}
                                       </div>
@@ -2733,15 +2730,15 @@ export default function App() {
                                       <button
                                         type="button"
                                         onClick={() => setPreviewSuratModal({
-                                          nama: compInfo.suratPengiktirafanNama || 'Surat Pengiktirafan KPM',
+                                          nama: compInfo.suratPengiktirafanNama || (compStatus === 'LUAR KPM (PENGIKTIRAFAN)' ? 'Surat Pengiktirafan KPM' : 'Sijil Murid'),
                                           data: compInfo.suratPengiktirafanData || '',
                                           pertandingan: selectedPertandinganInModal
                                         })}
                                         className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-black shadow-sm transition-all cursor-pointer"
-                                        title="Lihat Surat Pengiktirafan KPM"
+                                        title={compStatus === 'LUAR KPM (PENGIKTIRAFAN)' ? 'Lihat Surat Pengiktirafan KPM / Sijil' : 'Lihat Sijil Murid'}
                                       >
                                         <Eye className="w-4 h-4" />
-                                        <span>Surat KPM</span>
+                                        <span>{compStatus === 'LUAR KPM (PENGIKTIRAFAN)' ? 'Surat / Sijil' : 'Sijil'}</span>
                                       </button>
                                     )}
 
@@ -3016,7 +3013,7 @@ export default function App() {
                                         {firstItem.suratPengiktirafanData && (
                                           <span className="bg-indigo-50 border border-indigo-200 text-indigo-700 px-2 py-0.5 rounded font-black inline-flex items-center gap-1">
                                             <Paperclip className="w-3 h-3" />
-                                            Surat KPM
+                                            {normalizeStatus(firstItem.statusPertandingan) === 'LUAR KPM (PENGIKTIRAFAN)' ? 'Surat / Sijil' : 'Sijil'}
                                           </span>
                                         )}
                                       </div>
@@ -3306,8 +3303,8 @@ export default function App() {
                         </select>
                       </div>
 
-                      {/* Lampiran Surat Pengiktirafan KPM (Muncul apabila LUAR KPM (PENGIKTIRAFAN) dipilih) */}
-                      {normalizeStatus(formData.statusPertandingan) === 'LUAR KPM (PENGIKTIRAFAN)' && (
+                      {/* Lampiran Surat Pengiktirafan KPM atau Sijil Murid (Muncul apabila LUAR KPM (PENGIKTIRAFAN) dipilih atau rekod mempunyai lampiran sedia ada) */}
+                      {(normalizeStatus(formData.statusPertandingan) === 'LUAR KPM (PENGIKTIRAFAN)' || Boolean(formData.suratPengiktirafanData)) && (
                         <div className="md:col-span-2 bg-indigo-50/80 border-2 border-indigo-200 rounded-2xl p-4 sm:p-5 space-y-3 animate-in fade-in duration-200">
                           <div className="flex items-start justify-between gap-3">
                             <div className="flex items-start gap-2.5">
@@ -3316,10 +3313,14 @@ export default function App() {
                               </div>
                               <div>
                                 <h4 className="text-xs font-black text-indigo-950 uppercase tracking-wider">
-                                  Lampiran Surat Pengiktirafan Daripada KPM
+                                  {normalizeStatus(formData.statusPertandingan) === 'LUAR KPM (PENGIKTIRAFAN)'
+                                    ? 'Lampiran Surat Pengiktirafan Daripada KPM / Sijil'
+                                    : 'Lampiran Sijil Murid (Luar KPM)'}
                                 </h4>
                                 <p className="text-[11px] font-medium text-indigo-700 mt-0.5">
-                                  Guru atau ibu bapa boleh memuat naik salinan surat pengiktirafan KPM (Gambar JPG/PNG atau PDF maks 350KB). Fail disimpan dalam Firebase & Google Sheets.
+                                  {normalizeStatus(formData.statusPertandingan) === 'LUAR KPM (PENGIKTIRAFAN)'
+                                    ? 'Guru atau ibu bapa boleh memuat naik salinan surat pengiktirafan KPM atau sijil murid (Gambar JPG/PNG atau PDF maks 350KB). Fail disimpan dalam Firebase & Google Sheets.'
+                                    : 'Lampiran sijil murid yang dimuat naik melalui Portal Ibu Bapa atau guru. Fail disimpan dalam Firebase & Google Sheets.'}
                                 </p>
                               </div>
                             </div>
@@ -3332,7 +3333,11 @@ export default function App() {
                                 : 'bg-indigo-600 hover:bg-indigo-700 text-white'
                             }`}>
                               {attachmentBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
-                              <span>{formData.suratPengiktirafanData ? 'Tukar Surat Pengiktirafan' : 'Muat Naik Surat Pengiktirafan'}</span>
+                              <span>
+                                {formData.suratPengiktirafanData
+                                  ? (normalizeStatus(formData.statusPertandingan) === 'LUAR KPM (PENGIKTIRAFAN)' ? 'Tukar Surat / Sijil' : 'Tukar Sijil Murid')
+                                  : 'Muat Naik Surat Pengiktirafan'}
+                              </span>
                               <input
                                 type="file"
                                 accept="image/*,.pdf,application/pdf"
@@ -3346,43 +3351,45 @@ export default function App() {
                             </label>
 
                             {/* Contoh Surat Pengiktirafan KPM (Rujukan guru & ibu bapa di sebelah butang muat naik) */}
-                            <button
-                              type="button"
-                              onClick={() => setPreviewSuratModal({
-                                nama: 'Contoh Surat Pengiktirafan KPM (BSKK).jpg',
-                                data: CONTOH_SURAT_KPM_URL,
-                                pertandingan: 'Rujukan Format Surat Pengiktirafan KPM'
-                              })}
-                              className="inline-flex items-center gap-2.5 px-3 py-1.5 rounded-xl bg-white hover:bg-amber-50 border border-indigo-200 hover:border-amber-400 text-left transition-all cursor-pointer shadow-xs group"
-                              title="Klik untuk besarkan contoh surat pengiktirafan KPM"
-                            >
-                              <img
-                                src={CONTOH_SURAT_KPM_URL}
-                                alt="Contoh Surat Pengiktirafan KPM"
-                                className="w-8 h-10 object-cover rounded-md border border-slate-200 shrink-0 group-hover:scale-105 transition-transform"
-                              />
-                              <div className="leading-tight">
-                                <span className="block text-[10px] font-black text-indigo-950 uppercase tracking-wider">
-                                  Contoh Surat KPM
-                                </span>
-                                <span className="inline-flex items-center gap-1 text-[10px] font-bold text-indigo-600 group-hover:text-amber-700 mt-0.5">
-                                  <Eye className="w-3 h-3" />
-                                  <span>Klik untuk lihat rujukan</span>
-                                </span>
-                              </div>
-                            </button>
+                            {normalizeStatus(formData.statusPertandingan) === 'LUAR KPM (PENGIKTIRAFAN)' && (
+                              <button
+                                type="button"
+                                onClick={() => setPreviewSuratModal({
+                                  nama: 'Contoh Surat Pengiktirafan KPM (BSKK).jpg',
+                                  data: CONTOH_SURAT_KPM_URL,
+                                  pertandingan: 'Rujukan Format Surat Pengiktirafan KPM'
+                                })}
+                                className="inline-flex items-center gap-2.5 px-3 py-1.5 rounded-xl bg-white hover:bg-amber-50 border border-indigo-200 hover:border-amber-400 text-left transition-all cursor-pointer shadow-xs group"
+                                title="Klik untuk besarkan contoh surat pengiktirafan KPM"
+                              >
+                                <img
+                                  src={CONTOH_SURAT_KPM_URL}
+                                  alt="Contoh Surat Pengiktirafan KPM"
+                                  className="w-8 h-10 object-cover rounded-md border border-slate-200 shrink-0 group-hover:scale-105 transition-transform"
+                                />
+                                <div className="leading-tight">
+                                  <span className="block text-[10px] font-black text-indigo-950 uppercase tracking-wider">
+                                    Contoh Surat KPM
+                                  </span>
+                                  <span className="inline-flex items-center gap-1 text-[10px] font-bold text-indigo-600 group-hover:text-amber-700 mt-0.5">
+                                    <Eye className="w-3 h-3" />
+                                    <span>Klik untuk lihat rujukan</span>
+                                  </span>
+                                </div>
+                              </button>
+                            )}
 
                             {formData.suratPengiktirafanData && (
                               <div className="flex flex-wrap items-center gap-2 flex-1 min-w-[220px] bg-white border border-indigo-200 px-3 py-2 rounded-xl">
                                 <FileCheck2 className="w-4 h-4 text-emerald-600 shrink-0" />
                                 <span className="text-xs font-bold text-slate-700 truncate max-w-[200px]" title={formData.suratPengiktirafanNama}>
-                                  {formData.suratPengiktirafanNama || 'Surat Pengiktirafan KPM'}
+                                  {formData.suratPengiktirafanNama || (normalizeStatus(formData.statusPertandingan) === 'LUAR KPM (PENGIKTIRAFAN)' ? 'Surat Pengiktirafan KPM' : 'Sijil Murid')}
                                 </span>
                                 <div className="flex items-center gap-1.5 ml-auto">
                                   <button
                                     type="button"
                                     onClick={() => setPreviewSuratModal({
-                                      nama: formData.suratPengiktirafanNama || 'Surat Pengiktirafan KPM',
+                                      nama: formData.suratPengiktirafanNama || (normalizeStatus(formData.statusPertandingan) === 'LUAR KPM (PENGIKTIRAFAN)' ? 'Surat Pengiktirafan KPM' : 'Sijil Murid'),
                                       data: formData.suratPengiktirafanData,
                                       pertandingan: formData.pertandingan,
                                       murid: formData.nama
@@ -4559,16 +4566,16 @@ export default function App() {
                             <button
                               type="button"
                               onClick={() => setPreviewSuratModal({
-                                nama: r.suratPengiktirafanNama || 'Surat Pengiktirafan KPM',
+                                nama: r.suratPengiktirafanNama || (normalizeStatus(r.statusPertandingan) === 'LUAR KPM (PENGIKTIRAFAN)' ? 'Surat Pengiktirafan KPM' : 'Sijil Murid'),
                                 data: r.suratPengiktirafanData || '',
                                 pertandingan: r.pertandingan,
                                 murid: r.nama
                               })}
                               className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[8px] font-black bg-indigo-600 hover:bg-indigo-700 text-white cursor-pointer transition-colors"
-                              title="Lihat Surat Pengiktirafan KPM"
+                              title={normalizeStatus(r.statusPertandingan) === 'LUAR KPM (PENGIKTIRAFAN)' ? 'Lihat Surat Pengiktirafan KPM / Sijil' : 'Lihat Sijil Murid'}
                             >
                               <Eye className="w-2.5 h-2.5" />
-                              <span>Surat KPM</span>
+                              <span>{normalizeStatus(r.statusPertandingan) === 'LUAR KPM (PENGIKTIRAFAN)' ? 'Surat / Sijil' : 'Sijil'}</span>
                             </button>
                           )}
                         </div>

@@ -153,9 +153,8 @@ function splitAttachmentChunks(data: string | undefined, padFullRange = false): 
 
 export function recordToSheetRow(r: SheetRecord, padAttachmentCols = false): string[] {
   const nowStr = new Date().toLocaleString('ms-MY');
-  const isRecognized = (r.statusPertandingan || '').toUpperCase().includes('PENGIKTIRAFAN');
-  const suratNama = isRecognized ? (r.suratPengiktirafanNama || '').trim() : '';
-  const suratData = isRecognized ? (r.suratPengiktirafanData || '').trim() : '';
+  const suratNama = (r.suratPengiktirafanNama || '').trim();
+  const suratData = (r.suratPengiktirafanData || '').trim();
   const guruList = (r.guruPengiring || []).map(g => g.trim().toUpperCase()).filter(Boolean);
   const guruStr = guruList.join(', ');
   const mustPad = padAttachmentCols || guruStr.length > 0;
