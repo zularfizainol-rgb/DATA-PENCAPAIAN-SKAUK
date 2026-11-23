@@ -536,6 +536,27 @@ export default function App() {
     };
   }, [isParentMode, loadFromGoogleSheets]);
 
+  const availableYears = useMemo(() => {
+    const currentYear = new Date().getFullYear();
+    const yearSet = new Set<number>();
+    const minBaseYear = 2023;
+    const maxFutureYear = Math.max(currentYear + 5, 2030);
+    for (let y = minBaseYear; y <= maxFutureYear; y++) {
+      yearSet.add(y);
+    }
+    rekodPajsk.forEach(r => {
+      const parsed = parseInt((r.tahunKalendar || '').trim(), 10);
+      if (!Number.isNaN(parsed) && parsed >= 2000 && parsed <= 2100) {
+        yearSet.add(parsed);
+      }
+    });
+    const selectedParsed = parseInt(selectedYear, 10);
+    if (!Number.isNaN(selectedParsed) && selectedParsed >= 2000 && selectedParsed <= 2100) {
+      yearSet.add(selectedParsed);
+    }
+    return Array.from(yearSet).sort((a, b) => a - b).map(String);
+  }, [rekodPajsk, selectedYear]);
+
   const filteredData = useMemo(() => {
     return rekodPajsk.filter(r => {
       const matchesYear = r.tahunKalendar === selectedYear;
@@ -1109,6 +1130,9 @@ export default function App() {
         guruPengiring: item.guruPengiring && item.guruPengiring.length > 0 ? item.guruPengiring : [''],
         creatorId: item.creatorId || ''
       });
+      if (item.tahunKalendar) {
+        setSelectedYear(item.tahunKalendar);
+      }
       setEditingId(id);
       setKemasukanMode('individu');
       // Close any open modals
@@ -1608,6 +1632,9 @@ export default function App() {
       guruPengiring: [''],
       creatorId: 'ibubapa_disahkan_guru'
     });
+    if (sub.tahunKalendar) {
+      setSelectedYear(sub.tahunKalendar);
+    }
     setEditingId(null);
     setReviewingSubmissionRowIndex(sub.rowIndex);
     setKemasukanMode('individu');
@@ -2079,12 +2106,9 @@ export default function App() {
                   onChange={(e) => setSelectedYear(e.target.value)} 
                   className="bg-white border-2 border-slate-200 px-6 py-3 rounded-2xl font-black outline-none focus:border-amber-500 shadow-sm cursor-pointer"
                 >
-                  <option value="2023">TAHUN 2023</option>
-                  <option value="2024">TAHUN 2024</option>
-                  <option value="2025">TAHUN 2025</option>
-                  <option value="2026">TAHUN 2026</option>
-                  <option value="2027">TAHUN 2027</option>
-                  <option value="2028">TAHUN 2028</option>
+                  {availableYears.map(year => (
+                    <option key={year} value={year}>TAHUN {year}</option>
+                  ))}
                 </select>
               </div>
 
@@ -3065,33 +3089,49 @@ export default function App() {
                   </p>
                 </div>
 
-                {!editingId && (
-                  <div className="bg-slate-100 p-1.5 rounded-2xl flex items-center gap-1 w-full sm:w-auto border border-slate-200 shrink-0">
-                    <button 
-                      type="button"
-                      onClick={() => setKemasukanMode('individu')}
-                      className={`flex-1 sm:flex-none px-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer ${
-                        kemasukanMode === 'individu'
-                          ? 'bg-white text-slate-900 shadow-sm'
-                          : 'text-slate-500 hover:text-slate-900'
-                      }`}
+                <div className="flex flex-wrap items-center gap-2.5 w-full sm:w-auto shrink-0">
+                  <div className="bg-slate-50 border border-slate-200 px-3 py-2 rounded-2xl flex items-center gap-2">
+                    <Calendar className="w-4 h-4 text-amber-500 shrink-0" />
+                    <select
+                      value={selectedYear}
+                      onChange={(e) => setSelectedYear(e.target.value)}
+                      className="bg-transparent text-xs font-black text-slate-800 uppercase tracking-wider outline-none cursor-pointer"
+                      title="Pilih Tahun / Sesi untuk rekod ini"
                     >
-                      Individu (1 Murid)
-                    </button>
-                    <button 
-                      type="button"
-                      onClick={() => setKemasukanMode('pukal')}
-                      className={`flex-1 sm:flex-none px-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
-                        kemasukanMode === 'pukal'
-                          ? 'bg-amber-500 text-slate-900 shadow-sm'
-                          : 'text-slate-500 hover:text-slate-900'
-                      }`}
-                    >
-                      <Users className="w-3.5 h-3.5" />
-                      <span>Pukal (Ramai Murid)</span>
-                    </button>
+                      {availableYears.map(year => (
+                        <option key={year} value={year}>Sesi {year}</option>
+                      ))}
+                    </select>
                   </div>
-                )}
+
+                  {!editingId && (
+                    <div className="bg-slate-100 p-1.5 rounded-2xl flex items-center gap-1 flex-1 sm:flex-none border border-slate-200 shrink-0">
+                      <button 
+                        type="button"
+                        onClick={() => setKemasukanMode('individu')}
+                        className={`flex-1 sm:flex-none px-4 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer ${
+                          kemasukanMode === 'individu'
+                            ? 'bg-white text-slate-900 shadow-sm'
+                            : 'text-slate-500 hover:text-slate-900'
+                        }`}
+                      >
+                        Individu (1 Murid)
+                      </button>
+                      <button 
+                        type="button"
+                        onClick={() => setKemasukanMode('pukal')}
+                        className={`flex-1 sm:flex-none px-4 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+                          kemasukanMode === 'pukal'
+                            ? 'bg-amber-500 text-slate-900 shadow-sm'
+                            : 'text-slate-500 hover:text-slate-900'
+                        }`}
+                      >
+                        <Users className="w-3.5 h-3.5" />
+                        <span>Pukal (Ramai Murid)</span>
+                      </button>
+                    </div>
+                  )}
+                </div>
               </div>
 
               {/* Dual-Storage Status Strip in Kemasukan View */}
@@ -4146,12 +4186,9 @@ export default function App() {
                     className="bg-transparent text-xs font-black text-slate-800 uppercase tracking-wider outline-none cursor-pointer"
                     title="Pilih Sesi / Tahun"
                   >
-                    <option value="2023">Sesi 2023</option>
-                    <option value="2024">Sesi 2024</option>
-                    <option value="2025">Sesi 2025</option>
-                    <option value="2026">Sesi 2026</option>
-                    <option value="2027">Sesi 2027</option>
-                    <option value="2028">Sesi 2028</option>
+                    {availableYears.map(year => (
+                      <option key={year} value={year}>Sesi {year}</option>
+                    ))}
                   </select>
                 </div>
               </div>
