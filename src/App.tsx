@@ -4,7 +4,7 @@ import {
   PieChart, X, Save, Search, FileSpreadsheet, FileText, Award, Edit3, Trash2,
   Plus, ClipboardList, CheckCircle2, ArrowLeft, Copy, Check, ChevronRight, UserPlus, Filter,
   RefreshCw, ExternalLink, AlertTriangle, Database, Link2, LogOut, Sheet, ShieldCheck, CloudOff,
-  Calendar, Upload, Eye, Download, Paperclip, FileCheck2, Inbox
+  Calendar, Upload, Eye, Download, Paperclip, FileCheck2, Inbox, UserCheck, ArrowUpDown
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
@@ -267,6 +267,9 @@ export default function App() {
     pertandingan?: string;
     murid?: string;
   } | null>(null);
+  const [showGuruReportModal, setShowGuruReportModal] = useState(false);
+  const [guruReportSearch, setGuruReportSearch] = useState('');
+  const [guruReportSort, setGuruReportSort] = useState<'az' | 'za' | 'aktif'>('az');
 
   // Kemasukan Mode: 'individu' | 'pukal'
   const [kemasukanMode, setKemasukanMode] = useState<'individu' | 'pukal'>('individu');
@@ -619,6 +622,110 @@ export default function App() {
       muridUnik
     };
   }, [rekodPajsk, selectedYear, searchTerm, filterAliran, filterKelas, filterStatus, filterBahagian, filteredData]);
+
+  const guruPengiringSummaries = useMemo(() => {
+    type CompEntry = {
+      key: string;
+      pertandingan: string;
+      bahagian: string;
+      peringkat: string;
+      status: string;
+      tarikh: string;
+      pencapaianSet: Set<string>;
+      bilMurid: number;
+    };
+    type GuruMapEntry = {
+      namaGuru: string;
+      competitions: Map<string, CompEntry>;
+      totalMurid: number;
+    };
+
+    const map = new Map<string, GuruMapEntry>();
+
+    filteredData.forEach((r) => {
+      const guruList = Array.from(
+        new Set<string>((r.guruPengiring || []).map((g) => g.trim().toUpperCase()).filter(Boolean))
+      );
+      if (guruList.length === 0) return;
+
+      const tarikhStr = formatTarikhPaparan(r.jenisTarikh, r.tarikhMula, r.tarikhTamat) || '-';
+      const statusNorm = normalizeStatus(r.statusPertandingan);
+      const compKey = `${(r.pertandingan || '').trim().toUpperCase()}|${r.peringkat}|${r.bahagian}|${tarikhStr}|${statusNorm}`;
+
+      guruList.forEach((namaGuru) => {
+        let guruEntry = map.get(namaGuru);
+        if (!guruEntry) {
+          guruEntry = {
+            namaGuru,
+            competitions: new Map<string, CompEntry>(),
+            totalMurid: 0
+          };
+          map.set(namaGuru, guruEntry);
+        }
+
+        guruEntry.totalMurid += 1;
+        let comp = guruEntry.competitions.get(compKey);
+        if (!comp) {
+          comp = {
+            key: compKey,
+            pertandingan: (r.pertandingan || '').trim().toUpperCase(),
+            bahagian: r.bahagian || '-',
+            peringkat: r.peringkat || '-',
+            status: statusNorm,
+            tarikh: tarikhStr,
+            pencapaianSet: new Set<string>(),
+            bilMurid: 0
+          };
+          guruEntry.competitions.set(compKey, comp);
+        }
+        if (r.pencapaian) {
+          comp.pencapaianSet.add(r.pencapaian);
+        }
+        comp.bilMurid += 1;
+      });
+    });
+
+    const queryLower = guruReportSearch.trim().toLowerCase();
+    const list = Array.from(map.values())
+      .map((entry) => {
+        const competitions = Array.from(entry.competitions.values()).map((c) => ({
+          key: c.key,
+          pertandingan: c.pertandingan,
+          bahagian: c.bahagian,
+          peringkat: c.peringkat,
+          status: c.status,
+          tarikh: c.tarikh,
+          pencapaian: Array.from(c.pencapaianSet).join(', ') || '-',
+          bilMurid: c.bilMurid
+        }));
+        return {
+          namaGuru: entry.namaGuru,
+          competitions,
+          bilPertandingan: competitions.length,
+          totalMurid: entry.totalMurid
+        };
+      })
+      .filter((item) => {
+        if (!queryLower) return true;
+        return (
+          item.namaGuru.toLowerCase().includes(queryLower) ||
+          item.competitions.some((c) => c.pertandingan.toLowerCase().includes(queryLower))
+        );
+      });
+
+    list.sort((a, b) => {
+      if (guruReportSort === 'za') {
+        return b.namaGuru.localeCompare(a.namaGuru, 'ms');
+      }
+      if (guruReportSort === 'aktif') {
+        if (b.bilPertandingan !== a.bilPertandingan) return b.bilPertandingan - a.bilPertandingan;
+        if (b.totalMurid !== a.totalMurid) return b.totalMurid - a.totalMurid;
+      }
+      return a.namaGuru.localeCompare(b.namaGuru, 'ms');
+    });
+
+    return list;
+  }, [filteredData, guruReportSearch, guruReportSort]);
 
   const refreshParentSubmissions = useCallback(async (silent = false) => {
     if (!sheetConfig) {
@@ -1478,6 +1585,86 @@ export default function App() {
     const bahagianSuffix = filterBahagian !== 'SEMUA' ? `_${filterBahagian.replace(/[^a-zA-Z0-9]/g, '_')}` : '';
     const peringkatSuffix = filterPeringkat !== 'SEMUA' ? `_${filterPeringkat.replace(/[^a-zA-Z0-9]/g, '_')}` : '';
     docPdf.save(`LAPORAN_SKAUK_${selectedYear}${statusSuffix}${bahagianSuffix}${peringkatSuffix}.pdf`);
+  };
+
+  const exportGuruExcel = () => {
+    const summaryRows = guruPengiringSummaries.map((g, idx) => ({
+      "BIL": idx + 1,
+      "NAMA GURU PENGIRING / JURULATIH": g.namaGuru,
+      "BIL. PERTANDINGAN": g.bilPertandingan,
+      "BIL. MURID DIBIMBING": g.totalMurid,
+      "SENARAI PERTANDINGAN & PENCAPAIAN": g.competitions
+        .map((c) => `${c.pertandingan} [${c.peringkat}${c.tarikh !== '-' ? ` • ${c.tarikh}` : ''} • ${c.pencapaian} • ${c.bilMurid} murid]`)
+        .join(' | ')
+    }));
+
+    const detailRows: Array<Record<string, string | number>> = [];
+    let detailIdx = 1;
+    guruPengiringSummaries.forEach((g) => {
+      g.competitions.forEach((c) => {
+        detailRows.push({
+          "BIL": detailIdx++,
+          "NAMA GURU PENGIRING / JURULATIH": g.namaGuru,
+          "NAMA PERTANDINGAN / AKTIVITI": c.pertandingan,
+          "BAHAGIAN": c.bahagian,
+          "TARIKH AKTIVITI": c.tarikh,
+          "STATUS": c.status,
+          "PERINGKAT": c.peringkat,
+          "PENCAPAIAN MURID": c.pencapaian,
+          "BIL. MURID": c.bilMurid
+        });
+      });
+    });
+
+    const wb = XLSX.utils.book_new();
+    const wsSummary = XLSX.utils.json_to_sheet(summaryRows);
+    const wsDetail = XLSX.utils.json_to_sheet(detailRows);
+    XLSX.utils.book_append_sheet(wb, wsSummary, "Rumusan Ikut Guru");
+    XLSX.utils.book_append_sheet(wb, wsDetail, "Perincian Pertandingan");
+
+    XLSX.writeFile(wb, `RUMUSAN_GURU_PENGIRING_SKAUK_${selectedYear}.xlsx`);
+  };
+
+  const exportGuruPDF = () => {
+    const docPdf = new jsPDF('landscape');
+    docPdf.setFontSize(14);
+    docPdf.text(`RUMUSAN GURU PENGIRING / PEMBIMBING / JURULATIH SKAUK (${selectedYear})`, 14, 15);
+    docPdf.setFontSize(9);
+
+    const totalComps = guruPengiringSummaries.reduce((sum, g) => sum + g.bilPertandingan, 0);
+    docPdf.text(
+      `Jumlah Guru: ${guruPengiringSummaries.length} orang • Jumlah Penglibatan Pertandingan: ${totalComps} | Tarikh Cetakan: ${new Date().toLocaleDateString('ms-MY')}`,
+      14,
+      22
+    );
+
+    const rows: Array<Array<string | number>> = [];
+    let rowNum = 1;
+    guruPengiringSummaries.forEach((g) => {
+      g.competitions.forEach((c, cIdx) => {
+        rows.push([
+          cIdx === 0 ? rowNum++ : '',
+          cIdx === 0 ? g.namaGuru : '',
+          c.pertandingan,
+          c.bahagian,
+          c.peringkat,
+          c.tarikh,
+          c.pencapaian,
+          c.bilMurid
+        ]);
+      });
+    });
+
+    autoTable(docPdf, {
+      head: [['BIL', 'NAMA GURU PENGIRING', 'PERTANDINGAN / AKTIVITI', 'BAHAGIAN', 'PERINGKAT', 'TARIKH', 'PENCAPAIAN MURID', 'MURID']],
+      body: rows,
+      startY: 28,
+      theme: 'grid',
+      styles: { fontSize: 7.5, font: 'helvetica' },
+      headStyles: { fillColor: [180, 83, 9], textColor: [255, 255, 255], fontStyle: 'bold' }
+    });
+
+    docPdf.save(`LAPORAN_GURU_PENGIRING_SKAUK_${selectedYear}.pdf`);
   };
 
   // Helper to copy student names from competition modal
@@ -4506,7 +4693,16 @@ export default function App() {
                   )}
                 </div>
 
-                <div className="flex items-center gap-2.5 shrink-0">
+                <div className="flex flex-wrap items-center gap-2.5 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setShowGuruReportModal(true)}
+                    className="flex-1 sm:flex-none flex items-center justify-center gap-2 bg-amber-500 hover:bg-amber-400 text-slate-900 px-4 py-3 rounded-xl font-black text-[11px] uppercase tracking-wider shadow-sm transition-all cursor-pointer active:scale-95"
+                    title="Lihat rumusan & muat turun senarai guru pengiring tanpa duplikasi"
+                  >
+                    <UserCheck className="w-4 h-4 text-slate-900" />
+                    <span>Rumusan Guru</span>
+                  </button>
                   <button 
                     type="button"
                     onClick={exportExcel} 
@@ -5101,6 +5297,174 @@ export default function App() {
           </div>
         </div>
       )}
+      {/* ========================================================= */}
+      {/* MODAL RUMUSAN & LAPORAN KHAS GURU PENGIRING               */}
+      {/* ========================================================= */}
+      {showGuruReportModal && (
+        <div className="fixed inset-0 bg-slate-900/75 backdrop-blur-sm z-[70] flex items-center justify-center p-4 animate-in fade-in duration-150">
+          <div className="bg-white rounded-[32px] w-full max-w-5xl max-h-[90vh] shadow-2xl border border-slate-200 flex flex-col overflow-hidden">
+            {/* Modal Header */}
+            <div className="p-5 sm:p-6 border-b border-slate-100 bg-amber-50/70 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div className="flex items-center gap-3.5">
+                <div className="bg-amber-500 text-slate-900 p-3 rounded-2xl shadow-sm shrink-0">
+                  <UserCheck className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="text-lg sm:text-xl font-black text-slate-900 uppercase italic tracking-tight">
+                    Rumusan & Laporan Guru Pengiring
+                  </h3>
+                  <p className="text-[11px] font-bold text-slate-600 uppercase tracking-wider mt-0.5">
+                    Sesi {selectedYear} • {guruPengiringSummaries.length} Orang Guru • Digabungkan Tanpa Duplikasi Pasukan
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={exportGuruExcel}
+                  disabled={guruPengiringSummaries.length === 0}
+                  className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black uppercase tracking-wider shadow-sm transition-all cursor-pointer disabled:opacity-40"
+                >
+                  <FileSpreadsheet className="w-4 h-4 text-emerald-200" />
+                  <span>Excel Guru</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={exportGuruPDF}
+                  disabled={guruPengiringSummaries.length === 0}
+                  className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-black uppercase tracking-wider shadow-sm transition-all cursor-pointer disabled:opacity-40"
+                >
+                  <FileText className="w-4 h-4 text-rose-200" />
+                  <span>PDF Guru</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowGuruReportModal(false)}
+                  className="p-2.5 rounded-xl bg-white border border-slate-200 text-slate-500 hover:text-slate-900 cursor-pointer"
+                  title="Tutup"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+
+            {/* Search & Sort Controls */}
+            <div className="p-4 sm:px-6 border-b border-slate-100 bg-white flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+              <div className="relative flex-1">
+                <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
+                <input
+                  type="text"
+                  placeholder="Cari nama guru pengiring atau nama pertandingan..."
+                  value={guruReportSearch}
+                  onChange={(e) => setGuruReportSearch(e.target.value)}
+                  className="w-full pl-10 pr-9 py-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold text-xs outline-none focus:border-amber-500 focus:bg-white"
+                />
+                {guruReportSearch && (
+                  <button
+                    type="button"
+                    onClick={() => setGuruReportSearch('')}
+                    className="absolute right-3 top-2.5 text-slate-400 hover:text-slate-700 cursor-pointer"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                )}
+              </div>
+
+              <div className="flex items-center gap-2 shrink-0">
+                <ArrowUpDown className="w-4 h-4 text-amber-600 shrink-0" />
+                <select
+                  value={guruReportSort}
+                  onChange={(e) => setGuruReportSort(e.target.value as 'az' | 'za' | 'aktif')}
+                  className="bg-slate-50 border border-slate-200 px-3.5 py-2.5 rounded-xl text-xs font-black text-slate-800 uppercase tracking-wider outline-none cursor-pointer focus:border-amber-500"
+                >
+                  <option value="az">Susun Nama: A → Z</option>
+                  <option value="za">Susun Nama: Z → A</option>
+                  <option value="aktif">Paling Aktif (Bil. Pertandingan)</option>
+                </select>
+              </div>
+            </div>
+
+            {/* Modal Body: Grouped Teacher List */}
+            <div className="flex-1 overflow-auto p-4 sm:p-6 bg-slate-50/60 space-y-3">
+              {guruPengiringSummaries.length === 0 ? (
+                <div className="py-16 px-4 text-center bg-white rounded-2xl border border-dashed border-slate-200 space-y-2">
+                  <Users className="w-10 h-10 text-slate-300 mx-auto" />
+                  <p className="text-sm font-black text-slate-600">
+                    Tiada nama guru pengiring dijumpai bagi paparan ini.
+                  </p>
+                  <p className="text-xs font-medium text-slate-400 max-w-md mx-auto">
+                    Pastikan medan "Nama Guru Pengiring / Guru Pembimbing / Jurulatih" telah diisi dalam borang Daftar Pencapaian atau kemaskini rekod murid.
+                  </p>
+                </div>
+              ) : (
+                guruPengiringSummaries.map((guru, idx) => (
+                  <div
+                    key={guru.namaGuru}
+                    className="bg-white rounded-2xl border border-slate-200 p-4 sm:p-5 shadow-2xs hover:border-amber-300 transition-all space-y-3"
+                  >
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-slate-100">
+                      <div className="flex items-center gap-3">
+                        <span className="w-7 h-7 rounded-lg bg-slate-900 text-amber-400 text-xs font-black flex items-center justify-center shrink-0">
+                          {idx + 1}
+                        </span>
+                        <h4 className="text-sm sm:text-base font-black text-slate-900 uppercase tracking-tight">
+                          {guru.namaGuru}
+                        </h4>
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="px-2.5 py-1 rounded-lg bg-amber-50 border border-amber-200 text-amber-900 text-[10px] font-black uppercase tracking-wider">
+                          {guru.bilPertandingan} Pertandingan
+                        </span>
+                        <span className="px-2.5 py-1 rounded-lg bg-slate-100 border border-slate-200 text-slate-700 text-[10px] font-black uppercase tracking-wider">
+                          {guru.totalMurid} Penyertaan Murid
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
+                      {guru.competitions.map((comp) => (
+                        <div
+                          key={comp.key}
+                          className="p-3 rounded-xl bg-slate-50 border border-slate-200/80 space-y-1.5"
+                        >
+                          <div className="text-xs font-black text-slate-800 uppercase leading-snug">
+                            {comp.pertandingan}
+                          </div>
+                          <div className="flex flex-wrap items-center gap-1.5 text-[10px] font-bold">
+                            <span className="px-2 py-0.5 rounded bg-white border border-slate-200 text-slate-700">
+                              {comp.peringkat}
+                            </span>
+                            <span className="px-2 py-0.5 rounded bg-white border border-slate-200 text-slate-600">
+                              {comp.bahagian}
+                            </span>
+                            {comp.tarikh !== '-' && (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-white border border-slate-200 text-slate-600">
+                                <Calendar className="w-2.5 h-2.5 text-amber-600" />
+                                {comp.tarikh}
+                              </span>
+                            )}
+                          </div>
+                          <div className="flex items-center justify-between gap-2 pt-1 text-[11px]">
+                            <span className="font-black text-amber-700">
+                              Pencapaian: {comp.pencapaian}
+                            </span>
+                            <span className="font-bold text-slate-500 shrink-0">
+                              {comp.bilMurid} murid
+                            </span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ========================================================= */}
       {/* MODAL PRATONTON SURAT PENGIKTIRAFAN KPM                   */}
       {/* ========================================================= */}
