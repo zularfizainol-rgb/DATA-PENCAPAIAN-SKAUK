@@ -55,6 +55,9 @@ export default function ParentReviewView({
   formatTarikhPaparan
 }: ParentReviewViewProps) {
   const [urlDraft, setUrlDraft] = useState(parentScriptUrl);
+  React.useEffect(() => {
+    setUrlDraft(parentScriptUrl);
+  }, [parentScriptUrl]);
   const [copiedLink, setCopiedLink] = useState(false);
   const [copiedScript, setCopiedScript] = useState(false);
   const [showScriptModal, setShowScriptModal] = useState(false);
@@ -534,7 +537,7 @@ export default function ParentReviewView({
                     Panduan & Kod Google Apps Script (3 Langkah)
                   </h3>
                   <p className="text-[11px] font-bold text-indigo-700">
-                    Menghantar kiriman ibu bapa terus ke Tab "{PARENT_REVIEW_TAB_NAME}" & Google Drive sekolah
+                    Menghantar kiriman ibu bapa ke Tab "{PARENT_REVIEW_TAB_NAME}" &amp; mengaktifkan sandaran bacaan guru merentas komputer
                   </p>
                 </div>
               </div>

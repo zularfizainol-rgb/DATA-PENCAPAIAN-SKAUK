@@ -1,10 +1,11 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
   Loader2, LayoutDashboard, PlusCircle, Users, Trophy, GraduationCap,
   PieChart, X, Save, Search, FileSpreadsheet, FileText, Award, Edit3, Trash2,
   Plus, ClipboardList, CheckCircle2, ArrowLeft, Copy, Check, ChevronRight, UserPlus, Filter,
   RefreshCw, ExternalLink, AlertTriangle, Database, Link2, LogOut, Sheet, ShieldCheck, CloudOff,
-  Calendar, Upload, Eye, Download, Paperclip, FileCheck2, Inbox, UserCheck, ArrowUpDown
+  Calendar, Upload, Eye, Download, Paperclip, FileCheck2, Inbox, UserCheck, ArrowUpDown,
+  Share2, Code2
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
@@ -22,12 +23,15 @@ import {
   ParentSubmission,
   loadSavedSheetConfig,
   saveSheetConfig,
+  buildSheetConfigFromId,
   loadSavedParentScriptUrl,
   saveParentScriptUrl,
   createStudentSpreadsheet,
   inspectSpreadsheet,
   ensureSheetHeaders,
   fetchRecordsFromSheet,
+  fetchRecordsViaAppsScript,
+  fetchRecordsFromPublicSheet,
   appendRecordsToSheet,
   updateRecordInSheet,
   deleteRecordFromSheet,
@@ -35,7 +39,8 @@ import {
   ensureParentReviewTab,
   fetchParentSubmissionsFromSheet,
   updateParentSubmissionStatusInSheet,
-  deleteParentSubmissionFromSheet
+  deleteParentSubmissionFromSheet,
+  generateParentAppsScriptCode
 } from './lib/googleSheets';
 import ParentPortalView from './components/ParentPortalView';
 import ParentReviewView from './components/ParentReviewView';
@@ -235,6 +240,8 @@ export default function App() {
   const urlSearchParams = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null;
   const isParentMode = urlSearchParams?.get('mod') === 'ibubapa';
   const parentEndpointParam = (urlSearchParams?.get('ep') || '').trim();
+  const sheetIdParam = (urlSearchParams?.get('sheet') || '').trim();
+  const sheetTabParam = (urlSearchParams?.get('tab') || '').trim();
 
   const [activeView, setActiveView] = useState<'dashboard' | 'kemasukan' | 'senarai' | 'semakan'>('dashboard');
   const [previewParentPortal, setPreviewParentPortal] = useState(false);
@@ -330,11 +337,22 @@ export default function App() {
   const [googleUser, setGoogleUser] = useState<User | null>(null);
   const [hasSheetToken, setHasSheetToken] = useState(false);
   const [isLoggingInGoogle, setIsLoggingInGoogle] = useState(false);
-  const [sheetConfig, setSheetConfig] = useState<SheetConfig | null>(() => loadSavedSheetConfig());
+  const [sheetConfig, setSheetConfig] = useState<SheetConfig | null>(() => {
+    const saved = loadSavedSheetConfig();
+    if (sheetIdParam) {
+      const fromUrl = buildSheetConfigFromId(sheetIdParam, sheetTabParam || saved?.sheetTitle || 'Rekod Murid', saved?.spreadsheetTitle || 'REKOD PENCAPAIAN PAJSK SKAUK');
+      if (fromUrl && (!saved || saved.spreadsheetId !== fromUrl.spreadsheetId)) {
+        saveSheetConfig(fromUrl);
+        return fromUrl;
+      }
+    }
+    return saved;
+  });
   const [showSheetModal, setShowSheetModal] = useState(false);
   const [sheetUrlInput, setSheetUrlInput] = useState('');
   const [sheetBusy, setSheetBusy] = useState(false);
   const [dataSource, setDataSource] = useState<'firebase' | 'sheets' | 'cache'>('firebase');
+  const [sheetReadMode, setSheetReadMode] = useState<'oauth' | 'apps_script' | 'public_sheet' | null>(null);
   const [sheetLastSyncAt, setSheetLastSyncAt] = useState<string | null>(null);
   const [sheetFeedback, setSheetFeedback] = useState<{ type: 'success' | 'error' | 'info'; message: string } | null>(null);
   const [sheetConfirmDialog, setSheetConfirmDialog] = useState<{
@@ -346,59 +364,170 @@ export default function App() {
   } | null>(null);
 
   // Parent Portal & Teacher Verification States
-  const [parentScriptUrl, setParentScriptUrl] = useState<string>(() => parentEndpointParam || loadSavedParentScriptUrl());
+  const [parentScriptUrl, setParentScriptUrl] = useState<string>(() => {
+    if (parentEndpointParam) {
+      saveParentScriptUrl(parentEndpointParam);
+      return parentEndpointParam;
+    }
+    return loadSavedParentScriptUrl();
+  });
+  const [backupScriptInput, setBackupScriptInput] = useState<string>(() => parentEndpointParam || loadSavedParentScriptUrl());
+  const [copiedTeacherLink, setCopiedTeacherLink] = useState(false);
+  const [copiedBackupScriptCode, setCopiedBackupScriptCode] = useState(false);
+  const [showBackupScriptCode, setShowBackupScriptCode] = useState(false);
   const [parentSubmissions, setParentSubmissions] = useState<ParentSubmission[]>([]);
   const [reviewTabExists, setReviewTabExists] = useState(true);
   const [parentSubmissionsBusy, setParentSubmissionsBusy] = useState(false);
   const [reviewingSubmissionRowIndex, setReviewingSubmissionRowIndex] = useState<number | null>(null);
 
+  const shareableTeacherLink = useMemo(() => {
+    if (typeof window === 'undefined') return '';
+    const hasSheet = Boolean(sheetConfig?.spreadsheetId);
+    const hasScript = Boolean(parentScriptUrl.trim());
+    if (!hasSheet && !hasScript) return '';
+    const params = new URLSearchParams();
+    if (sheetConfig?.spreadsheetId) {
+      params.set('sheet', sheetConfig.spreadsheetId);
+      if (sheetConfig.sheetTitle) {
+        params.set('tab', sheetConfig.sheetTitle);
+      }
+    }
+    if (parentScriptUrl.trim()) {
+      params.set('ep', parentScriptUrl.trim());
+    }
+    return `${window.location.origin}${window.location.pathname}?${params.toString()}`;
+  }, [sheetConfig, parentScriptUrl]);
+
+  const appsScriptBackupCode = useMemo(
+    () => generateParentAppsScriptCode(sheetConfig?.spreadsheetId),
+    [sheetConfig?.spreadsheetId]
+  );
+
   const showNotice = useCallback((type: 'success' | 'error' | 'info', message: string) => {
     setSheetFeedback({ type, message });
   }, []);
 
-  // Load records directly from Google Sheets (used on manual load or Firebase quota fallback)
-  const loadFromGoogleSheets = useCallback(async (configOverride?: SheetConfig | null, silent = false) => {
+  // Load records from Google Sheets (OAuth primary, Apps Script / Public Sheet cross-computer fallback)
+  const loadFromGoogleSheets = useCallback(async (
+    configOverride?: SheetConfig | null,
+    silent = false,
+    scriptUrlOverride?: string
+  ) => {
     const activeConfig = configOverride ?? sheetConfig;
-    if (!activeConfig) {
-      if (!silent) showNotice('info', 'Sila cipta atau pautkan Google Sheet terlebih dahulu.');
-      return false;
-    }
-
+    const activeScriptUrl = (scriptUrlOverride ?? parentScriptUrl).trim();
     const token = await getAccessToken();
-    if (!token) {
-      if (!silent) showNotice('info', 'Sila log masuk akaun Google untuk membaca data dari Google Sheets.');
-      return false;
+
+    // Laluan 1: Guru sudah log masuk Google & Sheet dipautkan -> guna Google Sheets API terus
+    if (activeConfig && token) {
+      setSheetBusy(true);
+      try {
+        const sheetRecords = await fetchRecordsFromSheet(activeConfig, token);
+        setRekodPajsk(sheetRecords as RecordData[]);
+        try {
+          localStorage.setItem('cached_rekod_pajsk', JSON.stringify(sheetRecords));
+        } catch (e) {
+          console.warn('Could not update cache from Google Sheets:', e);
+        }
+        setDataSource('sheets');
+        setSheetReadMode('oauth');
+        setSheetLastSyncAt(new Date().toLocaleTimeString('ms-MY'));
+        if (!silent) {
+          showNotice('success', `Berjaya memuatkan ${sheetRecords.length} rekod murid daripada Google Sheets (${activeConfig.spreadsheetTitle}).`);
+        }
+        return true;
+      } catch (err) {
+        console.error('Error reading Google Sheets:', err);
+        if (err instanceof SheetApiError && err.isAuthError) {
+          clearAccessToken();
+          setHasSheetToken(false);
+          if (!activeScriptUrl) {
+            showNotice('error', 'Sesi akses Google Sheets telah tamat tempoh. Sila tekan "Sign in with Google" semula.');
+            setSheetBusy(false);
+            return false;
+          }
+          // Fall through to Apps Script fallback if available
+        } else if (!activeScriptUrl) {
+          showNotice('error', err instanceof Error ? err.message : 'Gagal membaca data daripada Google Sheets.');
+          setSheetBusy(false);
+          return false;
+        }
+      } finally {
+        setSheetBusy(false);
+      }
     }
 
-    setSheetBusy(true);
-    try {
-      const sheetRecords = await fetchRecordsFromSheet(activeConfig, token);
-      setRekodPajsk(sheetRecords as RecordData[]);
+    // Laluan 2: Sandaran Automatik Merentas Komputer melalui Google Apps Script (Tanpa perlu log masuk Google)
+    if (activeScriptUrl) {
+      setSheetBusy(true);
       try {
-        localStorage.setItem('cached_rekod_pajsk', JSON.stringify(sheetRecords));
-      } catch (e) {
-        console.warn('Could not update cache from Google Sheets:', e);
+        const res = await fetchRecordsViaAppsScript(activeScriptUrl, activeConfig?.sheetTitle);
+        if (res.config) {
+          setSheetConfig(res.config);
+        }
+        setRekodPajsk(res.records as RecordData[]);
+        try {
+          localStorage.setItem('cached_rekod_pajsk', JSON.stringify(res.records));
+        } catch (e) {
+          console.warn('Could not update cache from Apps Script:', e);
+        }
+        setDataSource('sheets');
+        setSheetReadMode('apps_script');
+        setSheetLastSyncAt(new Date().toLocaleTimeString('ms-MY'));
+        if (!silent) {
+          const title = res.config?.spreadsheetTitle || activeConfig?.spreadsheetTitle || 'Google Sheets';
+          showNotice('success', `Berjaya memuatkan ${res.records.length} rekod murid daripada ${title} (Mod Sandaran Apps Script).`);
+        }
+        return true;
+      } catch (err) {
+        console.error('Error reading via Apps Script:', err);
+        if (!silent) {
+          showNotice('error', err instanceof Error ? err.message : 'Gagal membaca data daripada Google Apps Script.');
+        }
+        return false;
+      } finally {
+        setSheetBusy(false);
       }
-      setDataSource('sheets');
-      setSheetLastSyncAt(new Date().toLocaleTimeString('ms-MY'));
-      if (!silent) {
-        showNotice('success', `Berjaya memuatkan ${sheetRecords.length} rekod murid daripada Google Sheets (${activeConfig.spreadsheetTitle}).`);
-      }
-      return true;
-    } catch (err) {
-      console.error('Error reading Google Sheets:', err);
-      if (err instanceof SheetApiError && err.isAuthError) {
-        clearAccessToken();
-        setHasSheetToken(false);
-        showNotice('error', 'Sesi akses Google Sheets telah tamat tempoh. Sila tekan "Sign in with Google" semula.');
-      } else {
-        showNotice('error', err instanceof Error ? err.message : 'Gagal membaca data daripada Google Sheets.');
-      }
-      return false;
-    } finally {
-      setSheetBusy(false);
     }
-  }, [sheetConfig, showNotice]);
+
+    // Laluan 3: Cuba baca Google Sheet yang dikongsi umum ("Anyone with the link can view")
+    if (activeConfig?.spreadsheetId) {
+      setSheetBusy(true);
+      try {
+        const publicRecords = await fetchRecordsFromPublicSheet(activeConfig.spreadsheetId, activeConfig.sheetTitle);
+        setRekodPajsk(publicRecords as RecordData[]);
+        try {
+          localStorage.setItem('cached_rekod_pajsk', JSON.stringify(publicRecords));
+        } catch (e) {
+          console.warn('Could not update cache from public Sheet:', e);
+        }
+        setDataSource('sheets');
+        setSheetReadMode('public_sheet');
+        setSheetLastSyncAt(new Date().toLocaleTimeString('ms-MY'));
+        if (!silent) {
+          showNotice('success', `Berjaya memuatkan ${publicRecords.length} rekod murid daripada Google Sheet yang dikongsi.`);
+        }
+        return true;
+      } catch (err) {
+        console.warn('Public Google Sheet read unavailable:', err);
+        if (!silent) {
+          showNotice('info', 'Sila log masuk akaun Google atau tetapkan URL Apps Script untuk membaca data daripada Google Sheet ini.');
+        }
+        return false;
+      } finally {
+        setSheetBusy(false);
+      }
+    }
+
+    if (!silent) {
+      showNotice('info', 'Sila sambungkan Google Sheet atau masukkan URL Apps Script sekolah terlebih dahulu.');
+    }
+    return false;
+  }, [sheetConfig, parentScriptUrl, showNotice]);
+
+  const loadFromGoogleSheetsRef = useRef(loadFromGoogleSheets);
+  useEffect(() => {
+    loadFromGoogleSheetsRef.current = loadFromGoogleSheets;
+  }, [loadFromGoogleSheets]);
 
   // Google Sign-In Handler
   const handleGoogleSignIn = async () => {
@@ -492,6 +621,17 @@ export default function App() {
       console.warn("Could not load from localStorage cache:", e);
     }
 
+    let fallbackTriggered = false;
+    const triggerQuotaFallback = () => {
+      if (fallbackTriggered) return;
+      fallbackTriggered = true;
+      const savedCfg = loadSavedSheetConfig();
+      const savedScript = parentEndpointParam || loadSavedParentScriptUrl();
+      if (savedCfg || savedScript) {
+        void loadFromGoogleSheetsRef.current(savedCfg, true, savedScript);
+      }
+    };
+
     const loadingTimeout = setTimeout(() => {
       setLoading(false);
     }, 2000);
@@ -500,6 +640,7 @@ export default function App() {
       if (status.quotaExceeded) {
         setQuotaWarning(true);
         setLoading(false);
+        triggerQuotaFallback();
       }
     });
 
@@ -517,6 +658,7 @@ export default function App() {
         console.warn("Could not write to localStorage cache:", e);
       }
       setDataSource('firebase');
+      setSheetReadMode(null);
       setLoading(false);
       setQuotaWarning(false);
     }, (err: unknown) => {
@@ -524,16 +666,8 @@ export default function App() {
       handleFirestoreError(err, OperationType.LIST, 'pencapaian');
       if (isQuotaError(err)) {
         setQuotaWarning(true);
-        setDataSource('cache');
-        // Automatically attempt fallback read from Google Sheets if token & sheetConfig are active
-        const savedCfg = loadSavedSheetConfig();
-        if (savedCfg) {
-          getAccessToken().then((token) => {
-            if (token) {
-              loadFromGoogleSheets(savedCfg, true);
-            }
-          });
-        }
+        setDataSource(prev => (prev === 'sheets' ? 'sheets' : 'cache'));
+        triggerQuotaFallback();
       }
       setLoading(false);
     });
@@ -543,7 +677,7 @@ export default function App() {
       unsubscribeAuth();
       unsubscribeSnap();
     };
-  }, [isParentMode, loadFromGoogleSheets]);
+  }, [isParentMode, parentEndpointParam]);
 
   const availableYears = useMemo(() => {
     const currentYear = new Date().getFullYear();
@@ -1411,7 +1545,20 @@ export default function App() {
 
     const token = await getAccessToken();
     if (!token) {
-      showNotice('info', 'Sila log masuk akaun Google terlebih dahulu.');
+      const quickConfig = buildSheetConfigFromId(sheetUrlInput);
+      if (!quickConfig) {
+        showNotice('error', 'ID atau pautan Google Sheet tidak sah.');
+        return;
+      }
+      saveSheetConfig(quickConfig);
+      setSheetConfig(quickConfig);
+      setSheetUrlInput('');
+      const loaded = await loadFromGoogleSheets(quickConfig, true);
+      if (loaded) {
+        showNotice('success', `Berjaya dipautkan dan dimuatkan daripada Google Sheet (${quickConfig.spreadsheetId}).`);
+      } else {
+        showNotice('info', 'Pautan Google Sheet disimpan! Sila tekan "Sign in with Google" atau tetapkan URL Apps Script untuk membaca & menyunting rekod.');
+      }
       return;
     }
 
@@ -1711,15 +1858,42 @@ export default function App() {
     setActiveView('kemasukan');
   };
 
-  // Parent Submissions Review Handlers
+  // Parent Submissions & Backup Script Handlers
   const handleSaveParentScriptUrl = (url: string) => {
-    saveParentScriptUrl(url);
-    setParentScriptUrl(url);
-    if (url.trim()) {
-      showNotice('success', 'URL Google Apps Script disimpan. Pautan khas ibu bapa sedia untuk disalin dan dikongsi.');
+    const clean = url.trim();
+    saveParentScriptUrl(clean);
+    setParentScriptUrl(clean);
+    setBackupScriptInput(clean);
+    if (clean) {
+      showNotice('success', 'URL Google Apps Script disimpan. Pautan ibu bapa & sandaran bacaan guru kini aktif.');
     } else {
       showNotice('info', 'URL Google Apps Script telah dikosongkan.');
     }
+  };
+
+  const handleSaveAndLoadBackupScript = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const clean = backupScriptInput.trim();
+    saveParentScriptUrl(clean);
+    setParentScriptUrl(clean);
+    if (!clean) {
+      showNotice('info', 'URL Apps Script telah dikosongkan.');
+      return;
+    }
+    await loadFromGoogleSheets(sheetConfig, false, clean);
+  };
+
+  const handleCopyTeacherLink = () => {
+    if (!shareableTeacherLink) return;
+    navigator.clipboard.writeText(shareableTeacherLink);
+    setCopiedTeacherLink(true);
+    setTimeout(() => setCopiedTeacherLink(false), 2500);
+  };
+
+  const handleCopyBackupScriptCode = () => {
+    navigator.clipboard.writeText(appsScriptBackupCode);
+    setCopiedBackupScriptCode(true);
+    setTimeout(() => setCopiedBackupScriptCode(false), 2500);
   };
 
   const handleEnsureParentReviewTab = async () => {
@@ -2256,19 +2430,32 @@ export default function App() {
                     : 'Memaparkan Data Murid Daripada Google Sheets'}
                 </h3>
                 <p className="text-xs font-medium mt-0.5 opacity-90">
-                  {quotaWarning && dataSource === 'sheets' && sheetConfig
-                    ? `Semua rekod murid (${rekodPajsk.length} rekod) sedang dipaparkan daripada Google Sheet "${sheetConfig.spreadsheetTitle}". Kemasukan data baharu tetap disimpan ke Google Sheets.`
-                    : quotaWarning && sheetConfig && !hasSheetToken
-                      ? `Sambungan Google Sheet "${sheetConfig.spreadsheetTitle}" dikesan. Sila log masuk Google untuk memaparkan dan menyimpan data terus dari Google Sheets.`
-                      : quotaWarning && !sheetConfig
-                        ? 'Firebase melebihi had harian. Sila sambungkan Google Sheets supaya data murid boleh dilihat dan rekod baharu dapat disimpan.'
-                        : `Paparan kini disegerakkan dengan Google Sheet "${sheetConfig?.spreadsheetTitle}"${sheetLastSyncAt ? ` (Dikemas kini ${sheetLastSyncAt})` : ''}.`}
+                  {quotaWarning && dataSource === 'sheets' && sheetReadMode === 'apps_script'
+                    ? `Semua rekod murid (${rekodPajsk.length} rekod) dipaparkan automatik daripada "${sheetConfig?.spreadsheetTitle || 'Google Sheet Sekolah'}" melalui Apps Script (Mod Bacaan Merentas Komputer). Log masuk Google hanya diperlukan jika mahu menambah atau mengedit rekod.`
+                    : quotaWarning && dataSource === 'sheets' && sheetConfig
+                      ? `Semua rekod murid (${rekodPajsk.length} rekod) sedang dipaparkan daripada Google Sheet "${sheetConfig.spreadsheetTitle}". Kemasukan data baharu tetap disimpan ke Google Sheets.`
+                      : quotaWarning && (sheetConfig || parentScriptUrl) && !hasSheetToken
+                        ? `Sambungan sandaran sekolah dikesan${sheetConfig ? ` ("${sheetConfig.spreadsheetTitle}")` : ''}. Klik "Muat Dari Sandaran" atau log masuk Google untuk memaparkan & mengedit data terkini.`
+                        : quotaWarning && !sheetConfig && !parentScriptUrl
+                          ? 'Firebase melebihi had harian. Buka Tetapan Google Sheets untuk pautkan Google Sheet atau tampal URL Apps Script sekolah supaya rekod dapat dilihat di komputer ini.'
+                          : `Paparan kini disegerakkan dengan Google Sheet "${sheetConfig?.spreadsheetTitle || 'Sekolah'}"${sheetLastSyncAt ? ` (Dikemas kini ${sheetLastSyncAt})` : ''}.`}
                 </p>
               </div>
             </div>
 
             <div className="flex flex-wrap items-center gap-2.5 shrink-0 w-full lg:w-auto">
-              {!hasSheetToken ? (
+              {(parentScriptUrl || (sheetConfig && hasSheetToken)) && (
+                <button
+                  type="button"
+                  onClick={() => loadFromGoogleSheets()}
+                  disabled={sheetBusy}
+                  className="bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl px-4 py-2.5 flex items-center gap-2 font-black text-xs uppercase tracking-wider shadow-xs transition-all cursor-pointer disabled:opacity-60"
+                >
+                  <RefreshCw className={`w-4 h-4 ${sheetBusy ? 'animate-spin' : ''}`} />
+                  <span>{dataSource === 'sheets' ? 'Muat Semula' : 'Muat Dari Sandaran'}</span>
+                </button>
+              )}
+              {!hasSheetToken && (
                 <button
                   type="button"
                   onClick={handleGoogleSignIn}
@@ -2281,26 +2468,17 @@ export default function App() {
                     <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z" />
                     <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z" />
                   </svg>
-                  <span>Sign in with Google</span>
+                  <span>{dataSource === 'sheets' ? 'Log Masuk (Untuk Edit)' : 'Sign in with Google'}</span>
                 </button>
-              ) : sheetConfig ? (
-                <button
-                  type="button"
-                  onClick={() => loadFromGoogleSheets()}
-                  disabled={sheetBusy}
-                  className="bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl px-4 py-2.5 flex items-center gap-2 font-black text-xs uppercase tracking-wider shadow-xs transition-all cursor-pointer disabled:opacity-60"
-                >
-                  <RefreshCw className={`w-4 h-4 ${sheetBusy ? 'animate-spin' : ''}`} />
-                  <span>Muat Semula dari Google Sheets</span>
-                </button>
-              ) : (
+              )}
+              {(!sheetConfig || !parentScriptUrl) && (
                 <button
                   type="button"
                   onClick={() => setShowSheetModal(true)}
                   className="bg-slate-900 hover:bg-slate-800 text-white rounded-xl px-4 py-2.5 flex items-center gap-2 font-black text-xs uppercase tracking-wider shadow-xs transition-all cursor-pointer"
                 >
                   <Link2 className="w-4 h-4 text-emerald-400" />
-                  <span>Sambung Google Sheet</span>
+                  <span>{sheetConfig ? 'Tetapan Sandaran' : 'Sambung Google Sheet'}</span>
                 </button>
               )}
             </div>
@@ -4471,7 +4649,7 @@ export default function App() {
               </div>
 
               <div className="flex flex-wrap items-center gap-2.5 self-start sm:self-auto">
-                {sheetConfig && hasSheetToken ? (
+                {(sheetConfig && hasSheetToken) || parentScriptUrl ? (
                   <>
                     <button
                       type="button"
@@ -4483,16 +4661,18 @@ export default function App() {
                       <RefreshCw className={`w-3.5 h-3.5 ${sheetBusy ? 'animate-spin' : ''}`} />
                       <span>Muat dari Sheet</span>
                     </button>
-                    <button
-                      type="button"
-                      onClick={handleRequestSyncAllToSheet}
-                      disabled={sheetBusy}
-                      className="bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 px-3.5 py-2.5 rounded-2xl shadow-xs flex items-center gap-2 text-xs font-black uppercase tracking-wider transition-all cursor-pointer disabled:opacity-60"
-                      title="Segerakkan rekod Firebase sedia ada yang belum wujud ke Google Sheets"
-                    >
-                      <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600" />
-                      <span>Segerak ke Sheet</span>
-                    </button>
+                    {sheetConfig && hasSheetToken && (
+                      <button
+                        type="button"
+                        onClick={handleRequestSyncAllToSheet}
+                        disabled={sheetBusy}
+                        className="bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 px-3.5 py-2.5 rounded-2xl shadow-xs flex items-center gap-2 text-xs font-black uppercase tracking-wider transition-all cursor-pointer disabled:opacity-60"
+                        title="Segerakkan rekod Firebase sedia ada yang belum wujud ke Google Sheets"
+                      >
+                        <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600" />
+                        <span>Segerak ke Sheet</span>
+                      </button>
+                    )}
                   </>
                 ) : (
                   <button
@@ -4501,7 +4681,7 @@ export default function App() {
                     className="bg-white hover:bg-emerald-50 border border-slate-200 hover:border-emerald-300 text-slate-700 px-3.5 py-2.5 rounded-2xl shadow-xs flex items-center gap-2 text-xs font-black uppercase tracking-wider transition-all cursor-pointer"
                   >
                     <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600" />
-                    <span>{sheetConfig ? 'Log Masuk Google Sheets' : 'Sambung Google Sheets'}</span>
+                    <span>{sheetConfig ? 'Log Masuk / Tetapan Sheet' : 'Sambung Google Sheets'}</span>
                   </button>
                 )}
 
@@ -5157,7 +5337,7 @@ export default function App() {
                     <button
                       type="button"
                       onClick={() => loadFromGoogleSheets()}
-                      disabled={sheetBusy || !hasSheetToken}
+                      disabled={sheetBusy || (!hasSheetToken && !parentScriptUrl)}
                       className="py-3 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black uppercase tracking-wider shadow-sm transition-all cursor-pointer flex items-center justify-center gap-2 disabled:opacity-50"
                     >
                       <RefreshCw className={`w-4 h-4 ${sheetBusy ? 'animate-spin' : ''}`} />
@@ -5227,7 +5407,7 @@ export default function App() {
                       />
                       <button
                         type="submit"
-                        disabled={sheetBusy || !hasSheetToken}
+                        disabled={sheetBusy}
                         className="px-5 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-black uppercase tracking-wider transition-all cursor-pointer disabled:opacity-50 shrink-0"
                       >
                         Pautkan Sheet
@@ -5237,9 +5417,95 @@ export default function App() {
                 </div>
               )}
 
+              {/* Step 3: Cross-Computer Backup & Teacher Share Link */}
+              <div className="p-5 rounded-2xl bg-indigo-50/70 border border-indigo-200 space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div>
+                    <span className="text-[10px] font-black uppercase tracking-widest text-indigo-700 block">
+                      Langkah 3 • Sandaran Merentas Komputer (Semua Guru)
+                    </span>
+                    <h4 className="text-sm font-black text-slate-900 mt-0.5">
+                      Paparan Automatik Apabila Kuota Firebase Penuh
+                    </h4>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowBackupScriptCode(prev => !prev)}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white border border-indigo-200 hover:bg-indigo-600 hover:text-white text-indigo-700 text-[11px] font-black uppercase tracking-wider transition-all cursor-pointer self-start"
+                  >
+                    <Code2 className="w-3.5 h-3.5" />
+                    <span>{showBackupScriptCode ? 'Tutup Kod Skrip' : 'Kod Apps Script'}</span>
+                  </button>
+                </div>
+
+                <p className="text-xs text-slate-600 font-medium leading-relaxed">
+                  Masukkan <strong>URL Web App Google Apps Script</strong> sekolah (skrip yang sama seperti Portal Ibu Bapa). Apabila kuota Firebase penuh, guru di komputer lain dapat terus melihat semua rekod daripada Google Sheet secara automatik tanpa perlu paut Sheet atau log masuk Google satu persatu.
+                </p>
+
+                <form onSubmit={handleSaveAndLoadBackupScript} className="flex flex-col sm:flex-row gap-2">
+                  <input
+                    type="url"
+                    placeholder="https://script.google.com/macros/s/.../exec"
+                    value={backupScriptInput}
+                    onChange={(e) => setBackupScriptInput(e.target.value)}
+                    className="flex-1 px-4 py-2.5 bg-white border border-indigo-200 rounded-xl text-xs font-bold outline-none focus:border-indigo-500"
+                  />
+                  <button
+                    type="submit"
+                    disabled={sheetBusy}
+                    className="px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-black uppercase tracking-wider transition-all cursor-pointer disabled:opacity-50 shrink-0"
+                  >
+                    {sheetBusy ? 'Memuatkan...' : 'Simpan & Muat Data'}
+                  </button>
+                </form>
+
+                {shareableTeacherLink && (
+                  <div className="p-3.5 rounded-xl bg-white border border-indigo-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+                    <div className="min-w-0">
+                      <span className="text-[10px] font-black uppercase tracking-wider text-indigo-700 flex items-center gap-1">
+                        <Share2 className="w-3 h-3" />
+                        Pautan Khas Guru (Auto-Sambung Di Komputer Lain):
+                      </span>
+                      <p className="text-[11px] font-mono text-slate-600 truncate mt-0.5" title={shareableTeacherLink}>
+                        {shareableTeacherLink}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleCopyTeacherLink}
+                      className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-[11px] font-black uppercase tracking-wider transition-all cursor-pointer shrink-0"
+                    >
+                      {copiedTeacherLink ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                      <span>{copiedTeacherLink ? 'Disalin!' : 'Salin Pautan Guru'}</span>
+                    </button>
+                  </div>
+                )}
+
+                {showBackupScriptCode && (
+                  <div className="space-y-2 pt-2 border-t border-indigo-200/70">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[10px] font-black uppercase tracking-wider text-indigo-800">
+                        Salin ke Extensions &gt; Apps Script dalam Google Sheet, kemudian Deploy Web App (Anyone)
+                      </span>
+                      <button
+                        type="button"
+                        onClick={handleCopyBackupScriptCode}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-900 text-white text-[10px] font-black uppercase tracking-wider cursor-pointer shrink-0"
+                      >
+                        {copiedBackupScriptCode ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+                        <span>{copiedBackupScriptCode ? 'Disalin!' : 'Salin Kod'}</span>
+                      </button>
+                    </div>
+                    <pre className="p-3.5 rounded-xl bg-slate-900 text-slate-100 text-[10px] font-mono overflow-x-auto max-h-56 leading-relaxed">
+                      {appsScriptBackupCode}
+                    </pre>
+                  </div>
+                )}
+              </div>
+
               <div className="p-4 rounded-2xl bg-amber-50 border border-amber-200 text-xs text-amber-900 leading-relaxed">
                 <strong className="uppercase text-[10px] tracking-wider block mb-1">Bagaimana Sandaran Ini Berfungsi?</strong>
-                Setiap kali rekod baharu dimasukkan (Individu atau Pukal), sistem akan menyimpan ke <strong>Firebase</strong> dan menambah baris ke <strong>Google Sheets</strong> secara serentak. Sekiranya Firebase mencapai had kuota harian, anda boleh terus melihat dan mengurus rekod murid terus daripada Google Sheets.
+                Setiap kali rekod baharu dimasukkan (Individu atau Pukal), sistem akan menyimpan ke <strong>Firebase</strong> dan menambah baris ke <strong>Google Sheets</strong> secara serentak. Sekiranya Firebase mencapai had kuota harian, kongsikan <strong>Pautan Khas Guru</strong> di atas atau tetapkan <strong>URL Apps Script</strong> supaya semua guru di komputer lain tetap dapat melihat rekod murid secara automatik.
               </div>
             </div>
           </div>

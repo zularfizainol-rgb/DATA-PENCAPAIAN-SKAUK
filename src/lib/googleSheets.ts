@@ -96,6 +96,18 @@ export function extractSpreadsheetId(input: string): string {
   return match ? match[1] : trimmed;
 }
 
+export function buildSheetConfigFromId(spreadsheetIdInput: string, sheetTitle = 'Rekod Murid', spreadsheetTitle = 'REKOD PENCAPAIAN PAJSK SKAUK'): SheetConfig | null {
+  const spreadsheetId = extractSpreadsheetId(spreadsheetIdInput);
+  if (!spreadsheetId) return null;
+  return {
+    spreadsheetId,
+    spreadsheetTitle,
+    sheetTitle: sheetTitle.trim() || 'Rekod Murid',
+    sheetId: 0,
+    spreadsheetUrl: `https://docs.google.com/spreadsheets/d/${spreadsheetId}/edit`
+  };
+}
+
 function escapeSheetTitle(title: string): string {
   // Wrap sheet title in single quotes and escape any single quotes inside
   return `'${title.replace(/'/g, "''")}'`;
@@ -445,29 +457,14 @@ export async function createStudentSpreadsheet(accessToken: string, schoolTitle 
   return config;
 }
 
-/**
- * Read all student records from Google Sheets (used for backup view & Firebase quota fallback)
- */
-export async function fetchRecordsFromSheet(config: SheetConfig, accessToken: string): Promise<SheetRecord[]> {
-  // Always inspect metadata to verify current sheet tab name
-  const { config: verifiedConfig } = await inspectSpreadsheet(config.spreadsheetId, accessToken);
-  if (verifiedConfig.sheetTitle !== config.sheetTitle || verifiedConfig.spreadsheetTitle !== config.spreadsheetTitle) {
-    saveSheetConfig(verifiedConfig);
-  }
-
-  const range = `${escapeSheetTitle(verifiedConfig.sheetTitle)}!A2:AM`;
-  const data = await sheetsFetch<{ values?: string[][] }>(
-    `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(verifiedConfig.spreadsheetId)}/values/${encodeURIComponent(range)}`,
-    accessToken
-  );
-
-  const rows = data.values || [];
+function parseSheetRowsToRecords(rows: string[][]): SheetRecord[] {
   const records: SheetRecord[] = [];
 
   rows.forEach((row, idx) => {
+    const firstCol = (row[0] || '').trim().toLowerCase();
     const nama = (row[1] || '').trim();
     const pertandingan = (row[6] || '').trim();
-    if (!nama && !pertandingan) return;
+    if (firstCol === 'id rekod' || (!nama && !pertandingan)) return;
 
     const id = (row[0] || '').trim() || `sheet_row_${idx + 2}`;
     const parsedDate = parseTarikhFromSheet(row[13] || '');
@@ -507,6 +504,160 @@ export async function fetchRecordsFromSheet(config: SheetConfig, accessToken: st
 
   // Reverse so newest entries appear near top, matching usual order
   return records.reverse();
+}
+
+/**
+ * Read all student records from Google Sheets (used for backup view & Firebase quota fallback)
+ */
+export async function fetchRecordsFromSheet(config: SheetConfig, accessToken: string): Promise<SheetRecord[]> {
+  // Always inspect metadata to verify current sheet tab name
+  const { config: verifiedConfig } = await inspectSpreadsheet(config.spreadsheetId, accessToken);
+  if (verifiedConfig.sheetTitle !== config.sheetTitle || verifiedConfig.spreadsheetTitle !== config.spreadsheetTitle) {
+    saveSheetConfig(verifiedConfig);
+  }
+
+  const range = `${escapeSheetTitle(verifiedConfig.sheetTitle)}!A2:AM`;
+  const data = await sheetsFetch<{ values?: string[][] }>(
+    `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(verifiedConfig.spreadsheetId)}/values/${encodeURIComponent(range)}`,
+    accessToken
+  );
+
+  return parseSheetRowsToRecords(data.values || []);
+}
+
+/**
+ * Read student records across computers via deployed Google Apps Script Web App (no per-teacher OAuth sign-in required)
+ */
+export async function fetchRecordsViaAppsScript(
+  appsScriptUrl: string,
+  preferredTab?: string
+): Promise<{ config: SheetConfig | null; records: SheetRecord[] }> {
+  const cleanUrl = appsScriptUrl.trim();
+  if (!cleanUrl) {
+    throw new Error('URL Google Apps Script tidak ditetapkan.');
+  }
+
+  const separator = cleanUrl.includes('?') ? '&' : '?';
+  const tabParam = preferredTab ? `&tab=${encodeURIComponent(preferredTab)}` : '';
+  const targetUrl = `${cleanUrl}${separator}action=records${tabParam}`;
+
+  const res = await fetch(targetUrl, {
+    method: 'GET',
+    redirect: 'follow'
+  });
+
+  if (!res.ok) {
+    throw new Error(`Pelayan Apps Script memulangkan ralat (${res.status}).`);
+  }
+
+  const text = await res.text();
+  let json: {
+    ok?: boolean;
+    error?: string;
+    message?: string;
+    config?: SheetConfig;
+    records?: SheetRecord[];
+  };
+  try {
+    json = JSON.parse(text);
+  } catch {
+    throw new Error('Respons Apps Script bukan JSON yang sah. Pastikan skrip telah di-deploy sebagai Web App (Who has access: Anyone).');
+  }
+
+  if (!json.ok) {
+    throw new Error(json.error || 'Gagal membaca rekod daripada Google Apps Script.');
+  }
+
+  if (!Array.isArray(json.records)) {
+    throw new Error('Skrip Apps Script masih versi lama (belum menyokong bacaan rekod). Sila salin kod terkini dan Deploy versi baharu.');
+  }
+
+  const parsedRecords: SheetRecord[] = json.records.map((r, idx) => ({
+    id: (r.id || '').trim() || `apps_script_${idx + 1}`,
+    nama: (r.nama || '').trim().toUpperCase(),
+    noKp: (r.noKp || '').trim(),
+    aliran: (r.aliran || '').trim() || 'Tahun 1',
+    kelas: (r.kelas || '').trim() || 'UIAM',
+    bahagian: (r.bahagian || '').trim() || 'Unit Beruniform',
+    pertandingan: (r.pertandingan || '').trim().toUpperCase(),
+    statusPertandingan: (r.statusPertandingan || '').trim() || 'KPM',
+    peringkat: (r.peringkat || '').trim() || 'Daerah',
+    pencapaian: (r.pencapaian || '').trim() || 'Penyertaan',
+    tahunKalendar: (r.tahunKalendar || '').trim() || new Date().getFullYear().toString(),
+    jenisTarikh: r.jenisTarikh === 'tempoh' ? 'tempoh' : 'satu_hari',
+    tarikhMula: (r.tarikhMula || '').trim(),
+    tarikhTamat: (r.tarikhTamat || '').trim(),
+    suratPengiktirafanNama: (r.suratPengiktirafanNama || '').trim(),
+    suratPengiktirafanData: (r.suratPengiktirafanData || '').trim(),
+    sijilMuridNama: (r.sijilMuridNama || '').trim(),
+    sijilMuridData: (r.sijilMuridData || '').trim(),
+    guruPengiring: Array.isArray(r.guruPengiring)
+      ? r.guruPengiring.map(g => String(g).trim().toUpperCase()).filter(Boolean)
+      : [],
+    updatedAt: r.updatedAt || '',
+    creatorId: (r.creatorId || '').trim() || 'guru_skauk'
+  }));
+
+  const returnedConfig = json.config?.spreadsheetId ? json.config : null;
+  if (returnedConfig) {
+    saveSheetConfig(returnedConfig);
+  }
+
+  return {
+    config: returnedConfig,
+    records: parsedRecords
+  };
+}
+
+/**
+ * Fallback read for Google Sheets shared as "Anyone with the link can view" without requiring OAuth login
+ */
+export async function fetchRecordsFromPublicSheet(
+  spreadsheetIdInput: string,
+  sheetTitle?: string
+): Promise<SheetRecord[]> {
+  const spreadsheetId = extractSpreadsheetId(spreadsheetIdInput);
+  if (!spreadsheetId) {
+    throw new SheetApiError('ID Google Sheet tidak sah.', 400);
+  }
+
+  const sheetQuery = sheetTitle ? `&sheet=${encodeURIComponent(sheetTitle)}` : '';
+  const url = `https://docs.google.com/spreadsheets/d/${encodeURIComponent(spreadsheetId)}/gviz/tq?tqx=out:json${sheetQuery}`;
+
+  const res = await fetch(url, { method: 'GET' });
+  if (!res.ok) {
+    throw new SheetApiError(`Google Sheet memerlukan log masuk atau perkongsian umum (${res.status}).`, res.status);
+  }
+
+  const rawText = await res.text();
+  const match = rawText.match(/google\.visualization\.Query\.setResponse\(([\s\S]*?)\);\s*$/);
+  if (!match?.[1]) {
+    throw new SheetApiError('Google Sheet ditetapkan sebagai peribadi. Sila log masuk Google atau gunakan mod Apps Script.', 403);
+  }
+
+  const parsed = JSON.parse(match[1]) as {
+    status?: string;
+    table?: {
+      rows?: Array<{ c?: Array<{ v?: unknown; f?: string } | null> }>;
+    };
+  };
+
+  if (parsed.status !== 'ok' || !parsed.table?.rows) {
+    throw new SheetApiError('Tidak dapat membaca data daripada Google Sheet ini tanpa log masuk.', 403);
+  }
+
+  const stringRows: string[][] = parsed.table.rows.map(row =>
+    (row.c || []).map(cell => {
+      if (!cell) return '';
+      if (cell.f !== undefined && cell.f !== null && String(cell.f).trim() !== '') {
+        return String(cell.f);
+      }
+      if (cell.v === undefined || cell.v === null) return '';
+      return String(cell.v);
+    })
+  );
+
+  return parseSheetRowsToRecords(stringRows);
 }
 
 /**
@@ -1024,8 +1175,9 @@ export function generateParentAppsScriptCode(spreadsheetId?: string): string {
     : `var SPREADSHEET_ID = SpreadsheetApp.getActiveSpreadsheet().getId();`;
 
   return `// =========================================================================
-// SKRIP PORTAL IBU BAPA - REKOD PENCAPAIAN PAJSK SKAUK
-// Simpan kiriman ibu bapa ke Tab "Semakan Ibu Bapa" & fail surat/sijil ke Google Drive
+// SKRIP RASMI PAJSK SKAUK (PORTAL IBU BAPA + SANDARAN BACAAN GURU MERENTAS KOMPUTER)
+// 1. doPost: Simpan kiriman ibu bapa ke Tab "Semakan Ibu Bapa" & lampiran ke Google Drive
+// 2. doGet (?action=records): Membekalkan rekod murid kepada semua guru secara automatik apabila Firebase mencapai had kuota
 // =========================================================================
 ${targetIdLine}
 var TAB_SEMAKAN = 'Semakan Ibu Bapa';
@@ -1043,6 +1195,34 @@ function simpanFailKeDrive_(folder, namaMurid, awalan, fileName, fileMimeType, f
     // Abaikan jika dasar domain mengehadkan perkongsian umum
   }
   return file.getUrl();
+}
+
+function formatSelTarikh_(val) {
+  if (!val) return '';
+  if (Object.prototype.toString.call(val) === '[object Date]' && !isNaN(val.getTime())) {
+    return Utilities.formatDate(val, 'Asia/Kuala_Lumpur', 'yyyy-MM-dd');
+  }
+  return String(val).trim();
+}
+
+function parseTarikhAktiviti_(rawVal) {
+  var trimmed = formatSelTarikh_(rawVal);
+  if (!trimmed || trimmed === '-') {
+    return { jenisTarikh: 'satu_hari', tarikhMula: '', tarikhTamat: '' };
+  }
+  var rangeMatch = trimmed.match(/^(\\d{4}-\\d{2}-\\d{2})\\s+(?:hingga|to|-)\\s+(\\d{4}-\\d{2}-\\d{2})$/i);
+  if (rangeMatch) {
+    return {
+      jenisTarikh: 'tempoh',
+      tarikhMula: rangeMatch[1],
+      tarikhTamat: rangeMatch[2]
+    };
+  }
+  return {
+    jenisTarikh: 'satu_hari',
+    tarikhMula: trimmed,
+    tarikhTamat: ''
+  };
 }
 
 function doPost(e) {
@@ -1123,10 +1303,120 @@ function doPost(e) {
   }
 }
 
-function doGet() {
-  return ContentService
-    .createTextOutput(JSON.stringify({ ok: true, message: 'Portal Ibu Bapa PAJSK SKAUK Aktif' }))
-    .setMimeType(ContentService.MimeType.JSON);
+function doGet(e) {
+  try {
+    var action = (e && e.parameter && e.parameter.action) ? String(e.parameter.action).trim() : '';
+    if (action !== 'records') {
+      return ContentService
+        .createTextOutput(JSON.stringify({ ok: true, message: 'Portal Ibu Bapa & Sandaran Bacaan PAJSK SKAUK Aktif' }))
+        .setMimeType(ContentService.MimeType.JSON);
+    }
+
+    var ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+    var requestedTab = (e && e.parameter && e.parameter.tab) ? String(e.parameter.tab).trim() : '';
+    var targetSheet = requestedTab ? ss.getSheetByName(requestedTab) : null;
+    if (!targetSheet) {
+      targetSheet = ss.getSheetByName('Rekod Murid');
+    }
+    if (!targetSheet) {
+      var allSheets = ss.getSheets();
+      for (var sIdx = 0; sIdx < allSheets.length; sIdx++) {
+        if (allSheets[sIdx].getName() !== TAB_SEMAKAN) {
+          targetSheet = allSheets[sIdx];
+          break;
+        }
+      }
+    }
+    if (!targetSheet) {
+      targetSheet = ss.getSheets()[0];
+    }
+
+    var config = {
+      spreadsheetId: ss.getId(),
+      spreadsheetTitle: ss.getName(),
+      sheetTitle: targetSheet.getName(),
+      sheetId: targetSheet.getSheetId(),
+      spreadsheetUrl: ss.getUrl()
+    };
+
+    var lastRow = targetSheet.getLastRow();
+    var lastCol = Math.min(Math.max(targetSheet.getLastColumn(), 15), 39);
+    var records = [];
+
+    if (lastRow >= 2) {
+      var values = targetSheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
+      for (var i = 0; i < values.length; i++) {
+        var row = values[i];
+        var nama = String(row[1] || '').trim();
+        var pertandingan = String(row[6] || '').trim();
+        if (!nama && !pertandingan) continue;
+
+        var parsedDate = parseTarikhAktiviti_(row[13]);
+        var suratParts = [];
+        for (var p = 15; p <= 25 && p < row.length; p++) {
+          if (row[p]) suratParts.push(String(row[p]));
+        }
+        var guruRaw = row.length > 26 ? String(row[26] || '').trim() : '';
+        var guruList = guruRaw
+          ? guruRaw.split(/[,;\\n|]+/).map(function(g) { return g.trim().toUpperCase(); }).filter(Boolean)
+          : [];
+        var sijilNama = row.length > 27 ? String(row[27] || '').trim() : '';
+        var sijilParts = [];
+        for (var c = 28; c <= 38 && c < row.length; c++) {
+          if (row[c]) sijilParts.push(String(row[c]));
+        }
+
+        var tahunRaw = row[10];
+        var tahunStr = '';
+        if (Object.prototype.toString.call(tahunRaw) === '[object Date]' && !isNaN(tahunRaw.getTime())) {
+          tahunStr = String(tahunRaw.getFullYear());
+        } else {
+          tahunStr = String(tahunRaw || '').trim() || String(new Date().getFullYear());
+        }
+
+        var updatedRaw = row[11];
+        var updatedStr = '';
+        if (Object.prototype.toString.call(updatedRaw) === '[object Date]' && !isNaN(updatedRaw.getTime())) {
+          updatedStr = Utilities.formatDate(updatedRaw, 'Asia/Kuala_Lumpur', 'dd/MM/yyyy HH:mm');
+        } else {
+          updatedStr = String(updatedRaw || '');
+        }
+
+        records.push({
+          id: String(row[0] || '').trim() || ('sheet_row_' + (i + 2)),
+          nama: nama.toUpperCase(),
+          noKp: String(row[2] || '').trim(),
+          aliran: String(row[3] || '').trim() || 'Tahun 1',
+          kelas: String(row[4] || '').trim() || 'UIAM',
+          bahagian: String(row[5] || '').trim() || 'Unit Beruniform',
+          pertandingan: pertandingan.toUpperCase(),
+          statusPertandingan: String(row[7] || '').trim() || 'KPM',
+          peringkat: String(row[8] || '').trim() || 'Daerah',
+          pencapaian: String(row[9] || '').trim() || 'Penyertaan',
+          tahunKalendar: tahunStr,
+          updatedAt: updatedStr,
+          creatorId: String(row[12] || '').trim() || 'guru_skauk',
+          jenisTarikh: parsedDate.jenisTarikh,
+          tarikhMula: parsedDate.tarikhMula,
+          tarikhTamat: parsedDate.tarikhTamat,
+          suratPengiktirafanNama: String(row[14] || '').trim(),
+          suratPengiktirafanData: suratParts.join('').trim(),
+          guruPengiring: guruList,
+          sijilMuridNama: sijilNama,
+          sijilMuridData: sijilParts.join('').trim()
+        });
+      }
+      records.reverse();
+    }
+
+    return ContentService
+      .createTextOutput(JSON.stringify({ ok: true, config: config, records: records }))
+      .setMimeType(ContentService.MimeType.JSON);
+  } catch (err) {
+    return ContentService
+      .createTextOutput(JSON.stringify({ ok: false, error: err.toString() }))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
 }`;
 }
 
