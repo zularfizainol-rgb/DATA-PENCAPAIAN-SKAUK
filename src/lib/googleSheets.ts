@@ -257,10 +257,14 @@ export async function inspectSpreadsheet(
     accessToken
   );
 
-  const firstSheet = meta.sheets?.[0]?.properties;
-  if (!firstSheet) {
+  const preferredSheet =
+    meta.sheets?.find(s => s.properties.title.trim().toLowerCase() === 'rekod murid')?.properties ||
+    meta.sheets?.find(s => s.properties.title !== PARENT_REVIEW_TAB_NAME)?.properties ||
+    meta.sheets?.[0]?.properties;
+  if (!preferredSheet) {
     throw new SheetApiError('Tiada tab helaian dijumpai dalam Google Sheet ini.', 400);
   }
+  const firstSheet = preferredSheet;
 
   const config: SheetConfig = {
     spreadsheetId: meta.spreadsheetId,
@@ -670,23 +674,13 @@ export async function appendRecordsToSheet(
 ): Promise<void> {
   if (records.length === 0) return;
   const range = `${escapeSheetTitle(config.sheetTitle)}!A:AM`;
-  const values = records.map(r => recordToSheetRow(r, true));
+  const BATCH_SIZE = 5;
 
-  try {
-    await sheetsFetch(
-      `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(config.spreadsheetId)}/values/${encodeURIComponent(range)}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`,
-      accessToken,
-      {
-        method: 'POST',
-        body: JSON.stringify({
-          majorDimension: 'ROWS',
-          values
-        })
-      }
-    );
-  } catch (err) {
-    if (err instanceof SheetApiError && err.status === 400) {
-      await ensureMinSheetColumns(config, 40, accessToken);
+  for (let i = 0; i < records.length; i += BATCH_SIZE) {
+    const chunk = records.slice(i, i + BATCH_SIZE);
+    const values = chunk.map(r => recordToSheetRow(r, true));
+
+    try {
       await sheetsFetch(
         `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(config.spreadsheetId)}/values/${encodeURIComponent(range)}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`,
         accessToken,
@@ -698,8 +692,23 @@ export async function appendRecordsToSheet(
           })
         }
       );
-    } else {
-      throw err;
+    } catch (err) {
+      if (err instanceof SheetApiError && err.status === 400) {
+        await ensureMinSheetColumns(config, 40, accessToken);
+        await sheetsFetch(
+          `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(config.spreadsheetId)}/values/${encodeURIComponent(range)}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`,
+          accessToken,
+          {
+            method: 'POST',
+            body: JSON.stringify({
+              majorDimension: 'ROWS',
+              values
+            })
+          }
+        );
+      } else {
+        throw err;
+      }
     }
   }
 }

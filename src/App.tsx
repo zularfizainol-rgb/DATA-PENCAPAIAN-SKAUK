@@ -539,7 +539,7 @@ export default function App() {
         setGoogleUser(result.user);
         setHasSheetToken(true);
         showNotice('success', `Berjaya log masuk sebagai ${result.user.email || result.user.displayName}. Sambungan Google Sheets sedia digunakan.`);
-        if (sheetConfig && (quotaWarning || dataSource !== 'firebase')) {
+        if (sheetConfig && (quotaWarning || dataSource === 'sheets')) {
           await loadFromGoogleSheets(sheetConfig, false);
         }
       }
@@ -1610,6 +1610,37 @@ export default function App() {
     }
   };
 
+  const handleSwitchBackToFirebase = async () => {
+    setSheetBusy(true);
+    try {
+      const snap = await getDocs(query(collection(db, 'pencapaian')));
+      const fbData = snap.docs.map(d => ({
+        id: d.id,
+        ...d.data()
+      })) as RecordData[];
+      setRekodPajsk(fbData);
+      try {
+        localStorage.setItem('cached_rekod_pajsk', JSON.stringify(fbData));
+      } catch (e) {
+        console.warn('Cache write error:', e);
+      }
+      setDataSource('firebase');
+      setSheetReadMode(null);
+      setQuotaWarning(false);
+      showNotice('success', `Paparan dikembalikan ke data rasmi Firebase (${fbData.length} rekod).`);
+    } catch (err) {
+      handleFirestoreError(err, OperationType.LIST, 'pencapaian');
+      if (isQuotaError(err)) {
+        setQuotaWarning(true);
+        showNotice('error', 'Kuota Firebase masih penuh buat masa ini. Kekal dalam mod sandaran Google Sheets.');
+      } else {
+        showNotice('error', 'Gagal membaca data daripada Firebase.');
+      }
+    } finally {
+      setSheetBusy(false);
+    }
+  };
+
   const handleRequestSyncAllToSheet = () => {
     if (!sheetConfig) {
       setShowSheetModal(true);
@@ -1621,8 +1652,8 @@ export default function App() {
     }
 
     setSheetConfirmDialog({
-      title: 'Segerak Semua Rekod ke Google Sheets?',
-      description: `Sistem akan menyemak ${rekodPajsk.length} rekod semasa dan menambah mana-mana rekod yang belum wujud ke dalam Google Sheet "${sheetConfig.spreadsheetTitle}" (Tab: ${sheetConfig.sheetTitle}) tanpa memadam data sedia ada.`,
+      title: 'Segerak Rekod Dari Firebase ke Google Sheets?',
+      description: `Sistem akan mengambil senarai terkini terus daripada pangkalan data Firebase dan menambah mana-mana rekod yang belum wujud ke dalam Google Sheet "${sheetConfig.spreadsheetTitle}" (Tab: ${sheetConfig.sheetTitle}) tanpa memadam data sedia ada.`,
       confirmLabel: 'Ya, Segerak Sekarang',
       variant: 'emerald',
       onConfirm: async () => {
@@ -1631,12 +1662,51 @@ export default function App() {
         if (!token) return;
         setSheetBusy(true);
         try {
-          const result = await syncMissingRecordsToSheet(sheetConfig, rekodPajsk, token);
+          let sourceRecords: RecordData[] = [];
+          try {
+            const snap = await getDocs(query(collection(db, 'pencapaian')));
+            const fbRecords = snap.docs.map(d => ({
+              id: d.id,
+              ...d.data()
+            })) as RecordData[];
+
+            // Gabungkan jika ada rekod tempatan yang belum sempat naik ke Firebase
+            if (dataSource !== 'sheets' && rekodPajsk.length > 0) {
+              const fbIds = new Set(fbRecords.map(r => r.id));
+              const localOnly = rekodPajsk.filter(r => !fbIds.has(r.id));
+              sourceRecords = [...localOnly, ...fbRecords];
+            } else {
+              sourceRecords = fbRecords;
+            }
+
+            setRekodPajsk(sourceRecords);
+            try {
+              localStorage.setItem('cached_rekod_pajsk', JSON.stringify(sourceRecords));
+            } catch (e) {
+              console.warn('Cache write error:', e);
+            }
+            setDataSource('firebase');
+            setSheetReadMode(null);
+            setQuotaWarning(false);
+          } catch (fbErr) {
+            handleFirestoreError(fbErr, OperationType.LIST, 'pencapaian');
+            if (dataSource !== 'sheets' && rekodPajsk.length > 0) {
+              sourceRecords = rekodPajsk;
+            } else if (isQuotaError(fbErr)) {
+              setQuotaWarning(true);
+              showNotice('error', 'Kuota Firebase sedang penuh, tidak dapat membaca rekod terkini daripada Firebase. Sila cuba semula selepas kuota Firebase pulih.');
+              return;
+            } else {
+              throw fbErr;
+            }
+          }
+
+          const result = await syncMissingRecordsToSheet(sheetConfig, sourceRecords, token);
           setSheetLastSyncAt(new Date().toLocaleTimeString('ms-MY'));
           if (result.addedCount > 0) {
-            showNotice('success', `Selesai! ${result.addedCount} rekod baharu ditambah ke Google Sheets (${result.alreadySyncedCount} rekod sudah wujud).`);
+            showNotice('success', `Selesai! Daripada ${sourceRecords.length} rekod Firebase, ${result.addedCount} rekod baharu berjaya ditambah ke Google Sheets (${result.alreadySyncedCount} sudah wujud).`);
           } else {
-            showNotice('info', `Semua ${result.alreadySyncedCount} rekod sudah pun disegerakkan di dalam Google Sheets.`);
+            showNotice('info', `Semua ${sourceRecords.length} rekod daripada Firebase sudah pun wujud di dalam Google Sheets (${sheetConfig.sheetTitle}).`);
           }
         } catch (err) {
           console.error('Sync all error:', err);
@@ -2613,6 +2683,17 @@ export default function App() {
             </div>
 
             <div className="flex flex-wrap items-center gap-2.5 shrink-0 w-full lg:w-auto">
+              {dataSource === 'sheets' && (
+                <button
+                  type="button"
+                  onClick={handleSwitchBackToFirebase}
+                  disabled={sheetBusy}
+                  className="bg-slate-900 hover:bg-slate-800 text-white rounded-xl px-4 py-2.5 flex items-center gap-2 font-black text-xs uppercase tracking-wider shadow-xs transition-all cursor-pointer disabled:opacity-60"
+                >
+                  <Database className="w-4 h-4 text-amber-400" />
+                  <span>Kembali ke Firebase</span>
+                </button>
+              )}
               {(parentScriptUrl || (sheetConfig && hasSheetToken)) && (
                 <button
                   type="button"
@@ -2621,7 +2702,7 @@ export default function App() {
                   className="bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl px-4 py-2.5 flex items-center gap-2 font-black text-xs uppercase tracking-wider shadow-xs transition-all cursor-pointer disabled:opacity-60"
                 >
                   <RefreshCw className={`w-4 h-4 ${sheetBusy ? 'animate-spin' : ''}`} />
-                  <span>{dataSource === 'sheets' ? 'Muat Semula' : 'Muat Dari Sandaran'}</span>
+                  <span>{dataSource === 'sheets' ? 'Muat Semula Sheet' : 'Muat Dari Sandaran'}</span>
                 </button>
               )}
               {!hasSheetToken && (
