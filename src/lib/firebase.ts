@@ -1,6 +1,19 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, User, signOut } from 'firebase/auth';
-import { getFirestore, collection, doc, setDoc, getDocs, onSnapshot, query, serverTimestamp, deleteDoc, getDocFromServer } from 'firebase/firestore';
+import {
+  initializeFirestore,
+  getFirestore,
+  collection,
+  doc,
+  setDoc,
+  getDocs,
+  onSnapshot,
+  query,
+  serverTimestamp,
+  deleteDoc,
+  getDocFromServer,
+  type Firestore
+} from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
 
 const app = initializeApp(firebaseConfig);
@@ -8,7 +21,18 @@ export const auth = getAuth(app);
 const firestoreDatabaseId =
   (firebaseConfig as { firestoreDatabaseId?: string }).firestoreDatabaseId ||
   'ai-studio-c3aa1f24-023c-44a1-a799-4df09c1d7afa';
-export const db = getFirestore(app, firestoreDatabaseId);
+
+export const db: Firestore = (() => {
+  try {
+    return initializeFirestore(
+      app,
+      { experimentalAutoDetectLongPolling: true },
+      firestoreDatabaseId
+    );
+  } catch {
+    return getFirestore(app, firestoreDatabaseId);
+  }
+})();
 
 // Google Workspace Scopes (Scope Minimization: Google Sheets only)
 export const SCOPES = [
@@ -109,7 +133,8 @@ export function isQuotaError(error: unknown): boolean {
   return (
     errObj?.code === 'resource-exhausted' ||
     msg.toLowerCase().includes('quota') ||
-    msg.toLowerCase().includes('resource-exhausted')
+    msg.toLowerCase().includes('resource-exhausted') ||
+    msg.toLowerCase().includes('resource_exhausted')
   );
 }
 
@@ -134,18 +159,67 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
   return errInfo;
 }
 
-export async function testConnection(): Promise<{ ok: boolean; quotaExceeded: boolean }> {
+export interface FirestoreConnectionStatus {
+  ok: boolean;
+  quotaExceeded: boolean;
+  offline: boolean;
+  configValid: boolean;
+}
+
+export async function testConnection(): Promise<FirestoreConnectionStatus> {
+  if (!firebaseConfig.projectId || !firebaseConfig.apiKey || !firebaseConfig.appId || !firestoreDatabaseId) {
+    console.warn('Konfigurasi Firebase tidak lengkap.');
+    return { ok: false, quotaExceeded: false, offline: false, configValid: false };
+  }
+
+  // Fast REST preflight (<4s) to detect 429 quota exhaustion or offline network
+  // before opening Firestore SDK WebChannel/long-polling streams that stall for 10s.
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 4000);
+  try {
+    const probeUrl = `https://firestore.googleapis.com/v1/projects/${encodeURIComponent(
+      firebaseConfig.projectId
+    )}/databases/${encodeURIComponent(firestoreDatabaseId)}/documents/test/connection?key=${encodeURIComponent(
+      firebaseConfig.apiKey
+    )}`;
+    const res = await fetch(probeUrl, { method: 'GET', signal: controller.signal });
+    clearTimeout(timeoutId);
+
+    if (res.status === 429) {
+      return { ok: false, quotaExceeded: true, offline: false, configValid: true };
+    }
+    if (res.status === 404) {
+      console.warn('Pangkalan data Firestore tidak ditemui untuk konfigurasi semasa.');
+      return { ok: false, quotaExceeded: false, offline: false, configValid: false };
+    }
+    if (!res.ok && res.status !== 403) {
+      const bodyText = await res.text().catch(() => '');
+      if (isQuotaError({ message: bodyText })) {
+        return { ok: false, quotaExceeded: true, offline: false, configValid: true };
+      }
+    }
+  } catch {
+    clearTimeout(timeoutId);
+    return { ok: false, quotaExceeded: false, offline: true, configValid: true };
+  }
+
   try {
     await getDocFromServer(doc(db, 'test', 'connection'));
-    return { ok: true, quotaExceeded: false };
+    return { ok: true, quotaExceeded: false, offline: false, configValid: true };
   } catch (error) {
     if (isQuotaError(error)) {
-      return { ok: false, quotaExceeded: true };
+      return { ok: false, quotaExceeded: true, offline: false, configValid: true };
     }
-    if (error instanceof Error && error.message.includes('the client is offline')) {
-      console.error('Please check your Firebase configuration.');
+    const errCode = (error as { code?: string } | null)?.code;
+    const errMsg = error instanceof Error ? error.message : String(error || '');
+    if (errCode === 'permission-denied' || errMsg.toLowerCase().includes('missing or insufficient permissions')) {
+      return { ok: true, quotaExceeded: false, offline: false, configValid: true };
     }
-    return { ok: false, quotaExceeded: false };
+    if (errMsg.includes('the client is offline') || errCode === 'unavailable') {
+      console.warn('Sambungan Firestore terganggu buat sementara (mod luar talian).');
+      return { ok: false, quotaExceeded: false, offline: true, configValid: true };
+    }
+    return { ok: false, quotaExceeded: false, offline: false, configValid: true };
   }
 }
 

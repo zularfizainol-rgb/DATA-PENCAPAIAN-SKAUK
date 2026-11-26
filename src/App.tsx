@@ -637,46 +637,68 @@ export default function App() {
       setLoading(false);
     }, 2000);
 
-    testConnection().then((status) => {
+    let isMounted = true;
+    let unsubscribeSnap: (() => void) | null = null;
+
+    const connectFirestore = async () => {
+      const status = await testConnection();
+      if (!isMounted) return;
+
       if (status.quotaExceeded) {
+        clearTimeout(loadingTimeout);
         setQuotaWarning(true);
         setLoading(false);
         triggerQuotaFallback();
+        return;
       }
-    });
 
-    const q = query(collection(db, 'pencapaian'));
-    const unsubscribeSnap = onSnapshot(q, (snapshot) => {
-      clearTimeout(loadingTimeout);
-      const data = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      })) as RecordData[];
-      setRekodPajsk(data);
-      try {
-        localStorage.setItem('cached_rekod_pajsk', JSON.stringify(data));
-      } catch (e) {
-        console.warn("Could not write to localStorage cache:", e);
+      if (status.offline || !status.configValid) {
+        clearTimeout(loadingTimeout);
+        setLoading(false);
+        if (status.offline) {
+          triggerQuotaFallback();
+        }
+        return;
       }
-      setDataSource('firebase');
-      setSheetReadMode(null);
-      setLoading(false);
-      setQuotaWarning(false);
-    }, (err: unknown) => {
-      clearTimeout(loadingTimeout);
-      handleFirestoreError(err, OperationType.LIST, 'pencapaian');
-      if (isQuotaError(err)) {
-        setQuotaWarning(true);
-        setDataSource(prev => (prev === 'sheets' ? 'sheets' : 'cache'));
-        triggerQuotaFallback();
-      }
-      setLoading(false);
-    });
+
+      const q = query(collection(db, 'pencapaian'));
+      unsubscribeSnap = onSnapshot(q, (snapshot) => {
+        clearTimeout(loadingTimeout);
+        const data = snapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data()
+        })) as RecordData[];
+        setRekodPajsk(data);
+        try {
+          localStorage.setItem('cached_rekod_pajsk', JSON.stringify(data));
+        } catch (e) {
+          console.warn("Could not write to localStorage cache:", e);
+        }
+        setDataSource('firebase');
+        setSheetReadMode(null);
+        setLoading(false);
+        setQuotaWarning(false);
+      }, (err: unknown) => {
+        clearTimeout(loadingTimeout);
+        handleFirestoreError(err, OperationType.LIST, 'pencapaian');
+        if (isQuotaError(err)) {
+          setQuotaWarning(true);
+          setDataSource(prev => (prev === 'sheets' ? 'sheets' : 'cache'));
+          triggerQuotaFallback();
+        }
+        setLoading(false);
+      });
+    };
+
+    void connectFirestore();
 
     return () => {
+      isMounted = false;
       clearTimeout(loadingTimeout);
       unsubscribeAuth();
-      unsubscribeSnap();
+      if (unsubscribeSnap) {
+        unsubscribeSnap();
+      }
     };
   }, [isParentMode, parentEndpointParam]);
 
@@ -1613,6 +1635,17 @@ export default function App() {
   const handleSwitchBackToFirebase = async () => {
     setSheetBusy(true);
     try {
+      const conn = await testConnection();
+      if (conn.quotaExceeded) {
+        setQuotaWarning(true);
+        showNotice('error', 'Kuota Firebase masih penuh buat masa ini. Kekal dalam mod sandaran Google Sheets.');
+        return;
+      }
+      if (conn.offline || !conn.configValid) {
+        showNotice('error', 'Sambungan ke pelayan Firebase tidak dapat dicapai buat masa ini.');
+        return;
+      }
+
       const snap = await getDocs(query(collection(db, 'pencapaian')));
       const fbData = snap.docs.map(d => ({
         id: d.id,
@@ -1664,30 +1697,48 @@ export default function App() {
         try {
           let sourceRecords: RecordData[] = [];
           try {
-            const snap = await getDocs(query(collection(db, 'pencapaian')));
-            const fbRecords = snap.docs.map(d => ({
-              id: d.id,
-              ...d.data()
-            })) as RecordData[];
-
-            // Gabungkan jika ada rekod tempatan yang belum sempat naik ke Firebase
-            if (dataSource !== 'sheets' && rekodPajsk.length > 0) {
-              const fbIds = new Set(fbRecords.map(r => r.id));
-              const localOnly = rekodPajsk.filter(r => !fbIds.has(r.id));
-              sourceRecords = [...localOnly, ...fbRecords];
+            const conn = await testConnection();
+            if (conn.quotaExceeded) {
+              setQuotaWarning(true);
+              if (dataSource !== 'sheets' && rekodPajsk.length > 0) {
+                sourceRecords = rekodPajsk;
+              } else {
+                showNotice('error', 'Kuota Firebase sedang penuh, tidak dapat membaca rekod terkini daripada Firebase. Sila cuba semula selepas kuota Firebase pulih.');
+                return;
+              }
+            } else if (conn.offline || !conn.configValid) {
+              if (dataSource !== 'sheets' && rekodPajsk.length > 0) {
+                sourceRecords = rekodPajsk;
+              } else {
+                showNotice('error', 'Sambungan ke pelayan Firebase tidak dapat dicapai buat masa ini.');
+                return;
+              }
             } else {
-              sourceRecords = fbRecords;
-            }
+              const snap = await getDocs(query(collection(db, 'pencapaian')));
+              const fbRecords = snap.docs.map(d => ({
+                id: d.id,
+                ...d.data()
+              })) as RecordData[];
 
-            setRekodPajsk(sourceRecords);
-            try {
-              localStorage.setItem('cached_rekod_pajsk', JSON.stringify(sourceRecords));
-            } catch (e) {
-              console.warn('Cache write error:', e);
+              // Gabungkan jika ada rekod tempatan yang belum sempat naik ke Firebase
+              if (dataSource !== 'sheets' && rekodPajsk.length > 0) {
+                const fbIds = new Set(fbRecords.map(r => r.id));
+                const localOnly = rekodPajsk.filter(r => !fbIds.has(r.id));
+                sourceRecords = [...localOnly, ...fbRecords];
+              } else {
+                sourceRecords = fbRecords;
+              }
+
+              setRekodPajsk(sourceRecords);
+              try {
+                localStorage.setItem('cached_rekod_pajsk', JSON.stringify(sourceRecords));
+              } catch (e) {
+                console.warn('Cache write error:', e);
+              }
+              setDataSource('firebase');
+              setSheetReadMode(null);
+              setQuotaWarning(false);
             }
-            setDataSource('firebase');
-            setSheetReadMode(null);
-            setQuotaWarning(false);
           } catch (fbErr) {
             handleFirestoreError(fbErr, OperationType.LIST, 'pencapaian');
             if (dataSource !== 'sheets' && rekodPajsk.length > 0) {
@@ -1702,11 +1753,18 @@ export default function App() {
           }
 
           const result = await syncMissingRecordsToSheet(sheetConfig, sourceRecords, token);
+          if (result.config) {
+            setSheetConfig(result.config);
+          }
           setSheetLastSyncAt(new Date().toLocaleTimeString('ms-MY'));
           if (result.addedCount > 0) {
-            showNotice('success', `Selesai! Daripada ${sourceRecords.length} rekod Firebase, ${result.addedCount} rekod baharu berjaya ditambah ke Google Sheets (${result.alreadySyncedCount} sudah wujud).`);
+            const rowInfo = result.startRow > 0 ? ` pada Baris ${result.startRow}–${result.endRow}` : '';
+            showNotice(
+              'success',
+              `Selesai! Daripada ${sourceRecords.length} rekod Firebase, ${result.addedCount} rekod baharu ditulis${rowInfo} (Tab: "${result.config.sheetTitle}") di fail "${result.config.spreadsheetTitle}".`
+            );
           } else {
-            showNotice('info', `Semua ${sourceRecords.length} rekod daripada Firebase sudah pun wujud di dalam Google Sheets (${sheetConfig.sheetTitle}).`);
+            showNotice('info', `Semua ${sourceRecords.length} rekod daripada Firebase sudah pun wujud di dalam Tab "${result.config.sheetTitle}" (${result.config.spreadsheetTitle}).`);
           }
         } catch (err) {
           console.error('Sync all error:', err);
@@ -1764,6 +1822,17 @@ export default function App() {
           }
 
           // Baca rekod sedia ada di Firebase untuk elak duplikasi
+          const conn = await testConnection();
+          if (conn.quotaExceeded) {
+            setQuotaWarning(true);
+            showNotice('error', 'Had kuota Firebase masih penuh buat masa ini. Sila cuba Segerak ke Firebase semula selepas kuota harian Firebase ditetapkan semula.');
+            return;
+          }
+          if (conn.offline || !conn.configValid) {
+            showNotice('error', 'Sambungan ke pelayan Firebase tidak dapat dicapai buat masa ini. Sila semak sambungan internet anda.');
+            return;
+          }
+
           let fbSnapshot;
           try {
             fbSnapshot = await getDocs(query(collection(db, 'pencapaian')));
@@ -2640,14 +2709,27 @@ export default function App() {
               )}
               <span>{sheetFeedback.message}</span>
             </div>
-            <button
-              type="button"
-              onClick={() => setSheetFeedback(null)}
-              className="p-1 rounded-lg hover:bg-black/5 cursor-pointer shrink-0"
-              title="Tutup makluman"
-            >
-              <X className="w-4 h-4" />
-            </button>
+            <div className="flex items-center gap-2 shrink-0">
+              {sheetConfig?.spreadsheetUrl && (
+                <a
+                  href={sheetConfig.spreadsheetUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-white/80 hover:bg-white border border-black/10 text-[11px] font-black uppercase tracking-wider transition-all"
+                >
+                  <ExternalLink className="w-3 h-3" />
+                  <span>Buka Sheet</span>
+                </a>
+              )}
+              <button
+                type="button"
+                onClick={() => setSheetFeedback(null)}
+                className="p-1 rounded-lg hover:bg-black/5 cursor-pointer shrink-0"
+                title="Tutup makluman"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
           </div>
         )}
 
@@ -4899,52 +4981,6 @@ export default function App() {
               </div>
 
               <div className="flex flex-wrap items-center gap-2.5 self-start sm:self-auto">
-                {(sheetConfig && hasSheetToken) || parentScriptUrl ? (
-                  <>
-                    <button
-                      type="button"
-                      onClick={() => loadFromGoogleSheets()}
-                      disabled={sheetBusy}
-                      className="bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-emerald-800 px-3.5 py-2.5 rounded-2xl shadow-xs flex items-center gap-2 text-xs font-black uppercase tracking-wider transition-all cursor-pointer disabled:opacity-60"
-                      title="Baca & paparkan data murid terus daripada Google Sheets"
-                    >
-                      <RefreshCw className={`w-3.5 h-3.5 ${sheetBusy ? 'animate-spin' : ''}`} />
-                      <span>Muat dari Sheet</span>
-                    </button>
-                    {sheetConfig && hasSheetToken && (
-                      <button
-                        type="button"
-                        onClick={handleRequestSyncAllToSheet}
-                        disabled={sheetBusy}
-                        className="bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 px-3.5 py-2.5 rounded-2xl shadow-xs flex items-center gap-2 text-xs font-black uppercase tracking-wider transition-all cursor-pointer disabled:opacity-60"
-                        title="Segerakkan rekod Firebase sedia ada yang belum wujud ke Google Sheets"
-                      >
-                        <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600" />
-                        <span>Firebase → Sheet</span>
-                      </button>
-                    )}
-                    <button
-                      type="button"
-                      onClick={handleRequestSyncSheetToFirebase}
-                      disabled={sheetBusy}
-                      className="bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-800 px-3.5 py-2.5 rounded-2xl shadow-xs flex items-center gap-2 text-xs font-black uppercase tracking-wider transition-all cursor-pointer disabled:opacity-60"
-                      title="Salin rekod baharu dari Google Sheet masuk ke Firebase"
-                    >
-                      <Database className="w-3.5 h-3.5 text-indigo-600" />
-                      <span>Sheet → Firebase</span>
-                    </button>
-                  </>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => setShowSheetModal(true)}
-                    className="bg-white hover:bg-emerald-50 border border-slate-200 hover:border-emerald-300 text-slate-700 px-3.5 py-2.5 rounded-2xl shadow-xs flex items-center gap-2 text-xs font-black uppercase tracking-wider transition-all cursor-pointer"
-                  >
-                    <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600" />
-                    <span>{sheetConfig ? 'Log Masuk / Tetapan Sheet' : 'Sambung Google Sheets'}</span>
-                  </button>
-                )}
-
                 <div className="bg-white border border-slate-200 px-3 py-2 rounded-2xl shadow-sm flex items-center gap-2">
                   <Trophy className="w-4 h-4 text-amber-500 shrink-0" />
                   <select

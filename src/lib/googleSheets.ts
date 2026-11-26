@@ -291,38 +291,60 @@ export async function inspectSpreadsheet(
   return { config, hasHeaders, firstRowValues };
 }
 
-async function ensureMinSheetColumns(config: SheetConfig, minColumns: number, accessToken: string): Promise<void> {
+async function ensureMinSheetGrid(
+  config: SheetConfig,
+  minRows: number,
+  minColumns: number,
+  accessToken: string
+): Promise<void> {
   try {
     const meta = await sheetsFetch<{
-      sheets: Array<{ properties: { sheetId: number; gridProperties?: { columnCount?: number } } }>;
+      sheets: Array<{ properties: { sheetId: number; title: string; gridProperties?: { rowCount?: number; columnCount?: number } } }>;
     }>(
-      `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(config.spreadsheetId)}?fields=sheets.properties(sheetId,gridProperties.columnCount)`,
+      `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(config.spreadsheetId)}?fields=sheets.properties(sheetId,title,gridProperties(rowCount,columnCount))`,
       accessToken
     );
-    const targetSheet = meta.sheets?.find(s => s.properties.sheetId === config.sheetId);
-    const currentCols = targetSheet?.properties?.gridProperties?.columnCount ?? 26;
+    const targetSheet =
+      meta.sheets?.find(s => s.properties.title === config.sheetTitle) ||
+      meta.sheets?.find(s => s.properties.sheetId === config.sheetId);
+    if (!targetSheet) return;
+
+    const targetSheetId = targetSheet.properties.sheetId;
+    const currentRows = targetSheet.properties.gridProperties?.rowCount ?? 1000;
+    const currentCols = targetSheet.properties.gridProperties?.columnCount ?? 26;
+    const requests: Array<Record<string, unknown>> = [];
+
+    if (currentRows < minRows) {
+      requests.push({
+        appendDimension: {
+          sheetId: targetSheetId,
+          dimension: 'ROWS',
+          length: minRows - currentRows
+        }
+      });
+    }
     if (currentCols < minColumns) {
+      requests.push({
+        appendDimension: {
+          sheetId: targetSheetId,
+          dimension: 'COLUMNS',
+          length: minColumns - currentCols
+        }
+      });
+    }
+
+    if (requests.length > 0) {
       await sheetsFetch(
         `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(config.spreadsheetId)}:batchUpdate`,
         accessToken,
         {
           method: 'POST',
-          body: JSON.stringify({
-            requests: [
-              {
-                appendDimension: {
-                  sheetId: config.sheetId,
-                  dimension: 'COLUMNS',
-                  length: minColumns - currentCols
-                }
-              }
-            ]
-          })
+          body: JSON.stringify({ requests })
         }
       );
     }
   } catch (err) {
-    console.warn('Amaran peluasan kolum Google Sheet:', err);
+    console.warn('Amaran peluasan grid Google Sheet:', err);
   }
 }
 
@@ -330,7 +352,7 @@ async function ensureMinSheetColumns(config: SheetConfig, minColumns: number, ac
  * Write standard header row to A1:P1 + AA1 (Guru Pengiring) and freeze row 1
  */
 export async function ensureSheetHeaders(config: SheetConfig, accessToken: string): Promise<void> {
-  await ensureMinSheetColumns(config, 40, accessToken);
+  await ensureMinSheetGrid(config, 100, 40, accessToken);
 
   const range = `${escapeSheetTitle(config.sheetTitle)}!A1:P1`;
   await sheetsFetch(
@@ -664,53 +686,64 @@ export async function fetchRecordsFromPublicSheet(
   return parseSheetRowsToRecords(stringRows);
 }
 
+async function findLastUsedRow(config: SheetConfig, accessToken: string): Promise<number> {
+  const range = `${escapeSheetTitle(config.sheetTitle)}!A1:B`;
+  const res = await sheetsFetch<{ values?: string[][] }>(
+    `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(config.spreadsheetId)}/values/${encodeURIComponent(range)}`,
+    accessToken
+  );
+  const rows = res.values || [];
+  let lastUsed = 1; // At least row 1 (header)
+  for (let i = rows.length - 1; i >= 0; i--) {
+    const colA = (rows[i]?.[0] || '').trim();
+    const colB = (rows[i]?.[1] || '').trim();
+    if (colA || colB) {
+      lastUsed = i + 1; // 1-based row number
+      break;
+    }
+  }
+  return lastUsed;
+}
+
 /**
- * Append one or multiple new records to Google Sheets
+ * Append one or multiple new records directly after the last non-empty row in Google Sheets
  */
 export async function appendRecordsToSheet(
   config: SheetConfig,
   records: SheetRecord[],
   accessToken: string
-): Promise<void> {
-  if (records.length === 0) return;
-  const range = `${escapeSheetTitle(config.sheetTitle)}!A:AM`;
-  const BATCH_SIZE = 5;
+): Promise<{ startRow: number; endRow: number }> {
+  if (records.length === 0) return { startRow: 0, endRow: 0 };
 
+  const lastUsedRow = await findLastUsedRow(config, accessToken);
+  const startRow = lastUsedRow + 1;
+  const endRow = startRow + records.length - 1;
+
+  await ensureMinSheetGrid(config, endRow + 10, 40, accessToken);
+
+  const BATCH_SIZE = 5;
   for (let i = 0; i < records.length; i += BATCH_SIZE) {
     const chunk = records.slice(i, i + BATCH_SIZE);
+    const chunkStart = startRow + i;
+    const chunkEnd = chunkStart + chunk.length - 1;
+    const range = `${escapeSheetTitle(config.sheetTitle)}!A${chunkStart}:AM${chunkEnd}`;
     const values = chunk.map(r => recordToSheetRow(r, true));
 
-    try {
-      await sheetsFetch(
-        `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(config.spreadsheetId)}/values/${encodeURIComponent(range)}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`,
-        accessToken,
-        {
-          method: 'POST',
-          body: JSON.stringify({
-            majorDimension: 'ROWS',
-            values
-          })
-        }
-      );
-    } catch (err) {
-      if (err instanceof SheetApiError && err.status === 400) {
-        await ensureMinSheetColumns(config, 40, accessToken);
-        await sheetsFetch(
-          `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(config.spreadsheetId)}/values/${encodeURIComponent(range)}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`,
-          accessToken,
-          {
-            method: 'POST',
-            body: JSON.stringify({
-              majorDimension: 'ROWS',
-              values
-            })
-          }
-        );
-      } else {
-        throw err;
+    await sheetsFetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(config.spreadsheetId)}/values/${encodeURIComponent(range)}?valueInputOption=RAW`,
+      accessToken,
+      {
+        method: 'PUT',
+        body: JSON.stringify({
+          range,
+          majorDimension: 'ROWS',
+          values
+        })
       }
-    }
+    );
   }
+
+  return { startRow, endRow };
 }
 
 /**
@@ -764,7 +797,7 @@ export async function updateRecordInSheet(
     );
   } catch (err) {
     if (err instanceof SheetApiError && err.status === 400) {
-      await ensureMinSheetColumns(config, 40, accessToken);
+      await ensureMinSheetGrid(config, rowIndex + 10, 40, accessToken);
       await sheetsFetch(
         `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(config.spreadsheetId)}/values/${encodeURIComponent(range)}?valueInputOption=USER_ENTERED`,
         accessToken,
@@ -826,8 +859,15 @@ export async function syncMissingRecordsToSheet(
   config: SheetConfig,
   records: SheetRecord[],
   accessToken: string
-): Promise<{ addedCount: number; alreadySyncedCount: number }> {
+): Promise<{
+  addedCount: number;
+  alreadySyncedCount: number;
+  startRow: number;
+  endRow: number;
+  config: SheetConfig;
+}> {
   const { config: verifiedConfig, hasHeaders } = await inspectSpreadsheet(config.spreadsheetId, accessToken);
+  saveSheetConfig(verifiedConfig);
   if (!hasHeaders) {
     await ensureSheetHeaders(verifiedConfig, accessToken);
   }
@@ -843,14 +883,21 @@ export async function syncMissingRecordsToSheet(
   );
 
   const missingRecords = records.filter(r => !existingIds.has(r.id));
+  let startRow = 0;
+  let endRow = 0;
   if (missingRecords.length > 0) {
     // Append oldest first so chronological order is clean in Sheet
-    await appendRecordsToSheet(verifiedConfig, [...missingRecords].reverse(), accessToken);
+    const writeRes = await appendRecordsToSheet(verifiedConfig, [...missingRecords].reverse(), accessToken);
+    startRow = writeRes.startRow;
+    endRow = writeRes.endRow;
   }
 
   return {
     addedCount: missingRecords.length,
-    alreadySyncedCount: records.length - missingRecords.length
+    alreadySyncedCount: records.length - missingRecords.length,
+    startRow,
+    endRow,
+    config: verifiedConfig
   };
 }
 
