@@ -12,13 +12,14 @@ import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { 
   db, 
-  collection, doc, setDoc, onSnapshot, query, 
+  collection, doc, setDoc, getDocs, onSnapshot, query, 
   serverTimestamp, deleteDoc,
   initAuth, googleSignIn, getAccessToken, clearAccessToken, logout,
   testConnection, isQuotaError, handleFirestoreError, OperationType, User
 } from './lib/firebase';
 import {
   SheetConfig,
+  SheetRecord,
   SheetApiError,
   ParentSubmission,
   loadSavedSheetConfig,
@@ -1645,6 +1646,174 @@ export default function App() {
             showNotice('error', 'Sesi akses Google tamat tempoh. Sila log masuk semula.');
           } else {
             showNotice('error', err instanceof Error ? err.message : 'Gagal menyegerakkan rekod ke Google Sheets.');
+          }
+        } finally {
+          setSheetBusy(false);
+        }
+      }
+    });
+  };
+
+  const handleRequestSyncSheetToFirebase = () => {
+    const hasAppsScript = Boolean(parentScriptUrl.trim());
+    if (!sheetConfig && !hasAppsScript) {
+      setShowSheetModal(true);
+      return;
+    }
+    if (!hasSheetToken && !hasAppsScript) {
+      showNotice('info', 'Sila log masuk Google atau tetapkan URL Apps Script terlebih dahulu untuk membaca Google Sheet.');
+      return;
+    }
+
+    const sheetLabel = sheetConfig?.spreadsheetTitle || 'Google Sheet Sekolah';
+    setSheetConfirmDialog({
+      title: 'Segerak Rekod Dari Google Sheet ke Firebase?',
+      description: `Sistem akan membaca semua rekod daripada "${sheetLabel}" dan menyalin mana-mana rekod yang belum wujud ke dalam pangkalan data Firebase (tanpa memadam atau menduplikasi rekod sedia ada).`,
+      confirmLabel: 'Ya, Segerak ke Firebase',
+      variant: 'emerald',
+      onConfirm: async () => {
+        setSheetConfirmDialog(null);
+        setSheetBusy(true);
+        try {
+          const token = await getAccessToken();
+          let sheetRecords: SheetRecord[] = [];
+
+          if (sheetConfig && token) {
+            sheetRecords = await fetchRecordsFromSheet(sheetConfig, token);
+          } else if (hasAppsScript) {
+            const res = await fetchRecordsViaAppsScript(parentScriptUrl, sheetConfig?.sheetTitle);
+            if (res.config) setSheetConfig(res.config);
+            sheetRecords = res.records;
+          } else if (sheetConfig?.spreadsheetId) {
+            sheetRecords = await fetchRecordsFromPublicSheet(sheetConfig.spreadsheetId, sheetConfig.sheetTitle);
+          }
+
+          if (sheetRecords.length === 0) {
+            showNotice('info', 'Tiada rekod dijumpai di dalam Google Sheet untuk disegerakkan.');
+            return;
+          }
+
+          // Baca rekod sedia ada di Firebase untuk elak duplikasi
+          let fbSnapshot;
+          try {
+            fbSnapshot = await getDocs(query(collection(db, 'pencapaian')));
+          } catch (fbErr) {
+            handleFirestoreError(fbErr, OperationType.LIST, 'pencapaian');
+            if (isQuotaError(fbErr)) {
+              setQuotaWarning(true);
+              showNotice('error', 'Had kuota Firebase masih penuh buat masa ini. Sila cuba Segerak ke Firebase semula selepas kuota harian Firebase ditetapkan semula.');
+              return;
+            }
+            throw fbErr;
+          }
+
+          const existingIds = new Set<string>();
+          const existingFingerprints = new Set<string>();
+          fbSnapshot.docs.forEach((d) => {
+            existingIds.add(d.id);
+            const data = d.data() as Partial<RecordData>;
+            const fp = `${(data.nama || '').trim().toUpperCase()}|${(data.noKp || '').trim()}|${(data.pertandingan || '').trim().toUpperCase()}|${(data.tahunKalendar || '').trim()}|${(data.pencapaian || '').trim().toUpperCase()}`;
+            existingFingerprints.add(fp);
+          });
+
+          const missingFromFirebase = sheetRecords.filter((r) => {
+            if (existingIds.has(r.id)) return false;
+            const fp = `${(r.nama || '').trim().toUpperCase()}|${(r.noKp || '').trim()}|${(r.pertandingan || '').trim().toUpperCase()}|${(r.tahunKalendar || '').trim()}|${(r.pencapaian || '').trim().toUpperCase()}`;
+            if ((r.id.startsWith('sheet_row_') || r.id.startsWith('apps_script_')) && existingFingerprints.has(fp)) {
+              return false;
+            }
+            return true;
+          });
+
+          if (missingFromFirebase.length === 0) {
+            showNotice('info', `Semua ${sheetRecords.length} rekod daripada Google Sheet sudah pun wujud di dalam Firebase.`);
+            return;
+          }
+
+          let addedCount = 0;
+          let skippedCount = 0;
+          let quotaHitMidSync = false;
+          const chronologicalMissing = [...missingFromFirebase].reverse();
+
+          for (let i = 0; i < chronologicalMissing.length; i++) {
+            const r = chronologicalMissing[i];
+            const namaClean = (r.nama || '').trim().toUpperCase().slice(0, 200);
+            const pertandinganClean = (r.pertandingan || '').trim().toUpperCase().slice(0, 200);
+            if (!namaClean || !pertandinganClean) {
+              skippedCount++;
+              continue;
+            }
+
+            const rawId = (r.id || '').trim();
+            const isManualRowId = !rawId || rawId.startsWith('sheet_row_') || rawId.startsWith('apps_script_') || !/^[a-zA-Z0-9_-]{1,128}$/.test(rawId);
+            const docId = isManualRowId ? generateValidId(i + 1) : rawId;
+
+            if (existingIds.has(docId)) {
+              continue;
+            }
+
+            const rawYear = (r.tahunKalendar || '').trim();
+            const validYear = /^\d{4}$/.test(rawYear) ? rawYear : new Date().getFullYear().toString();
+            const suratData = (r.suratPengiktirafanData || '').trim();
+            const sijilData = (r.sijilMuridData || '').trim();
+
+            const payload = {
+              nama: namaClean,
+              noKp: (r.noKp || '').trim().slice(0, 20),
+              aliran: (r.aliran || 'Tahun 1').trim().slice(0, 50),
+              kelas: (r.kelas || 'UIAM').trim().slice(0, 50),
+              bahagian: (r.bahagian || 'Unit Beruniform').trim().slice(0, 100),
+              pertandingan: pertandinganClean,
+              statusPertandingan: (r.statusPertandingan || 'KPM').trim().slice(0, 50),
+              peringkat: (r.peringkat || 'Daerah').trim().slice(0, 50),
+              pencapaian: (r.pencapaian || 'Penyertaan').trim().slice(0, 50),
+              tahunKalendar: validYear,
+              jenisTarikh: r.jenisTarikh === 'tempoh' ? 'tempoh' : 'satu_hari',
+              tarikhMula: (r.tarikhMula || '').trim().slice(0, 20),
+              tarikhTamat: r.jenisTarikh === 'tempoh' ? (r.tarikhTamat || '').trim().slice(0, 20) : '',
+              suratPengiktirafanNama: (r.suratPengiktirafanNama || '').trim().slice(0, 255),
+              suratPengiktirafanData: suratData.length <= 700000 ? suratData : '',
+              sijilMuridNama: (r.sijilMuridNama || '').trim().slice(0, 255),
+              sijilMuridData: sijilData.length <= 700000 ? sijilData : '',
+              guruPengiring: Array.isArray(r.guruPengiring)
+                ? r.guruPengiring.map(g => g.trim().toUpperCase()).filter(Boolean).slice(0, 20)
+                : [],
+              creatorId: (r.creatorId || 'guru_skauk').trim().slice(0, 128) || 'guru_skauk',
+              updatedAt: serverTimestamp()
+            };
+
+            try {
+              await setDoc(doc(db, 'pencapaian', docId), payload);
+              existingIds.add(docId);
+              addedCount++;
+            } catch (writeErr) {
+              handleFirestoreError(writeErr, OperationType.CREATE, `pencapaian/${docId}`);
+              if (isQuotaError(writeErr)) {
+                quotaHitMidSync = true;
+                setQuotaWarning(true);
+                break;
+              }
+              skippedCount++;
+            }
+          }
+
+          setSheetLastSyncAt(new Date().toLocaleTimeString('ms-MY'));
+          if (quotaHitMidSync) {
+            showNotice('error', `Had kuota Firebase dicapai semasa penyegerakan (${addedCount} rekod sempat disalin ke Firebase). Sila sambung semula selepas kuota pulih.`);
+          } else if (addedCount > 0) {
+            const skipNote = skippedCount > 0 ? ` (${skippedCount} baris tidak lengkap dilangkau)` : '';
+            showNotice('success', `Selesai! ${addedCount} rekod baharu daripada Google Sheet berjaya disalin masuk ke Firebase.${skipNote}`);
+          } else {
+            showNotice('info', 'Tiada rekod baharu dapat disalin ke Firebase.');
+          }
+        } catch (err) {
+          console.error('Sync Sheet to Firebase error:', err);
+          if (err instanceof SheetApiError && err.isAuthError) {
+            clearAccessToken();
+            setHasSheetToken(false);
+            showNotice('error', 'Sesi akses Google tamat tempoh. Sila log masuk semula.');
+          } else {
+            showNotice('error', err instanceof Error ? err.message : 'Gagal menyegerakkan rekod daripada Google Sheet ke Firebase.');
           }
         } finally {
           setSheetBusy(false);
@@ -4670,9 +4839,19 @@ export default function App() {
                         title="Segerakkan rekod Firebase sedia ada yang belum wujud ke Google Sheets"
                       >
                         <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600" />
-                        <span>Segerak ke Sheet</span>
+                        <span>Firebase → Sheet</span>
                       </button>
                     )}
+                    <button
+                      type="button"
+                      onClick={handleRequestSyncSheetToFirebase}
+                      disabled={sheetBusy}
+                      className="bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-800 px-3.5 py-2.5 rounded-2xl shadow-xs flex items-center gap-2 text-xs font-black uppercase tracking-wider transition-all cursor-pointer disabled:opacity-60"
+                      title="Salin rekod baharu dari Google Sheet masuk ke Firebase"
+                    >
+                      <Database className="w-3.5 h-3.5 text-indigo-600" />
+                      <span>Sheet → Firebase</span>
+                    </button>
                   </>
                 ) : (
                   <button
@@ -5333,25 +5512,35 @@ export default function App() {
                     </a>
                   </div>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t border-emerald-200/70">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 pt-2 border-t border-emerald-200/70">
                     <button
                       type="button"
                       onClick={() => loadFromGoogleSheets()}
                       disabled={sheetBusy || (!hasSheetToken && !parentScriptUrl)}
-                      className="py-3 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black uppercase tracking-wider shadow-sm transition-all cursor-pointer flex items-center justify-center gap-2 disabled:opacity-50"
+                      className="py-3 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-black uppercase tracking-wider shadow-sm transition-all cursor-pointer flex items-center justify-center gap-1.5 disabled:opacity-50"
                     >
-                      <RefreshCw className={`w-4 h-4 ${sheetBusy ? 'animate-spin' : ''}`} />
-                      <span>Muat Data Dari Google Sheet</span>
+                      <RefreshCw className={`w-3.5 h-3.5 ${sheetBusy ? 'animate-spin' : ''}`} />
+                      <span>Papar Dari Sheet</span>
                     </button>
 
                     <button
                       type="button"
                       onClick={handleRequestSyncAllToSheet}
                       disabled={sheetBusy || !hasSheetToken}
-                      className="py-3 px-4 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-black uppercase tracking-wider shadow-sm transition-all cursor-pointer flex items-center justify-center gap-2 disabled:opacity-50"
+                      className="py-3 px-3 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-[11px] font-black uppercase tracking-wider shadow-sm transition-all cursor-pointer flex items-center justify-center gap-1.5 disabled:opacity-50"
                     >
-                      <Sheet className="w-4 h-4 text-amber-400" />
-                      <span>Segerak Rekod Ke Sheet</span>
+                      <Sheet className="w-3.5 h-3.5 text-amber-400" />
+                      <span>Firebase → Sheet</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={handleRequestSyncSheetToFirebase}
+                      disabled={sheetBusy || (!hasSheetToken && !parentScriptUrl)}
+                      className="py-3 px-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-[11px] font-black uppercase tracking-wider shadow-sm transition-all cursor-pointer flex items-center justify-center gap-1.5 disabled:opacity-50"
+                    >
+                      <Database className="w-3.5 h-3.5 text-indigo-200" />
+                      <span>Sheet → Firebase</span>
                     </button>
                   </div>
 
